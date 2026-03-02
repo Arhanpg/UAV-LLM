@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>UAV Logistics Dashboard</title>
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=default"></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key={{ gmaps_key }}&callback=initMap&libraries=geometry" defer></script>
+    <style>
+        body { font-family: sans-serif; display: flex; margin: 0; height: 100vh; }
+        #map { flex: 3; height: 100%; }
+        #sidebar { flex: 1; padding: 20px; background: #f8f9fa; display: flex; flex-direction: column; gap: 15px; }
+        input, button, textarea { padding: 10px; font-size: 14px; width: 100%; box-sizing: border-box; }
+        #log { background: #fff; padding: 10px; flex-grow: 1; overflow-y: auto; border: 1px solid #ccc; font-size: 13px; line-height: 1.4; }
+        .error-text { color: red; font-weight: bold; }
+        .success-text { color: green; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <h2>Mission Control</h2>
+        <input type="text" id="origin" placeholder="Source" value="KIMS Hubballi">
+        <input type="text" id="destination" placeholder="Destination" value="SDM College Dharwad">
+        <textarea id="command" rows="4" placeholder="Natural Language Request...">Must fly over Gamanagatti to pick up a second parcel.</textarea>
+        
+        <button onclick="dispatchDrone()">Dispatch / Re-plan</button>
+        
+        <div id="log"><strong>System Log:</strong><br></div>
+    </div>
+
+    <div id="map"></div>
+
+<script>
+    let map, droneMarker, flightPath;
+    let animationInterval;
+    let pathCoordinates = [];
+    let currentIndex = 0;
+
+    function initMap() {
+        // Centered closer to Hubballi/Dharwad region
+        map = new google.maps.Map(document.getElementById("map"), {
+            center: { lat: 15.3647, lng: 75.1240 }, 
+            zoom: 12,
+            mapId: "DEMO_MAP_ID"
+        });
+    }
+
+    function logMessage(msg, isError = false) {
+        const logDiv = document.getElementById("log");
+        if (isError) {
+            logDiv.innerHTML += `<span class="error-text">❌ ${msg}</span><br><hr>`;
+        } else {
+            logDiv.innerHTML += msg + "<br><hr>";
+        }
+        logDiv.scrollTop = logDiv.scrollHeight; // Auto-scroll to bottom
+    }
+
+    async function dispatchDrone() {
+        const origin = document.getElementById("origin").value;
+        const dest = document.getElementById("destination").value;
+        const command = document.getElementById("command").value;
+
+        logMessage("<i>Synthesizing constraints via LLM...</i>");
+
+        try {
+            const response = await fetch('/plan_route', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ origin: origin, destination: dest, command: command })
+            });
+
+            const data = await response.json();
+            
+            // Proper Error Catching
+            if (!response.ok) {
+                logMessage("Mission Failed: " + data.error, true);
+                return;
+            }
+
+            const c = data.constraints;
+            logMessage(`<span class="success-text">✅ Aerial Flight Path Locked</span><br>
+                        <b>Class:</b> ${c.commodity_class}<br>
+                        <b>Waypoints to Visit:</b> ${c.waypoints.join(', ') || 'None'}<br>
+                        <b>Zones to Avoid:</b> ${c.geofenced_zones.join(', ') || 'None'}`);
+
+            // NEW: Directly use the raw lat/lng coordinates sent from the backend geocoder
+            pathCoordinates = data.path_coordinates;
+            
+            if (flightPath) flightPath.setMap(null);
+            flightPath = new google.maps.Polyline({
+                path: pathCoordinates,
+                geodesic: true, // Draws a true aerial arc 
+                strokeColor: "#007BFF", // Changed to Blue for Drone Flight
+                strokeOpacity: 0.8,
+                strokeWeight: 4,
+                map: map
+            });
+
+            // Auto-adjust map to fit the whole route
+            const bounds = new google.maps.LatLngBounds();
+            pathCoordinates.forEach(coord => bounds.extend(coord));
+            map.fitBounds(bounds);
+
+            startAnimation();
+
+        } catch (err) {
+            logMessage("Network/Server Error: " + err.message, true);
+        }
+    }
+
+    function startAnimation() {
+        if (animationInterval) clearInterval(animationInterval);
+        if (droneMarker) droneMarker.setMap(null);
+
+        currentIndex = 0;
+        
+        droneMarker = new google.maps.Marker({
+            position: pathCoordinates[0],
+            map: map,
+            icon: {
+                url: "https://cdn-icons-png.flaticon.com/512/9316/9316686.png", 
+                scaledSize: new google.maps.Size(40, 40)
+            }
+        });
+
+        // Calculate smaller steps for smoother point-to-point drone animation
+        animationInterval = setInterval(() => {
+            if (currentIndex >= pathCoordinates.length - 1) {
+                clearInterval(animationInterval);
+                logMessage("<b>Mission Accomplished.</b>");
+                return;
+            }
+            
+            // Simple direct hop to the next waypoint
+            currentIndex++;
+            droneMarker.setPosition(pathCoordinates[currentIndex]);
+        }, 800); // Slowed down slightly so you can see it jump between waypoints
+    }
+</script>
+
+</body>
+</html>
