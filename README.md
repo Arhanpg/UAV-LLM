@@ -29,7 +29,7 @@ source .venv/bin/activate   # or .venv\\Scripts\\activate on Windows
 pip install -r requirements.txt
 python app.py
 ```
-Then open [http://localhost:8000](http://localhost:8000)
+Then open [http://127.0.0.1:8000](http://127.0.0.1:8000) or [http://localhost:8000](http://localhost:8000)
 
 ## Ollama
 Run a local model with:
