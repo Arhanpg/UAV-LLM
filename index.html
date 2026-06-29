@@ -1,141 +1,44 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>UAV Logistics Dashboard</title>
-    <script src="https://polyfill.io/v3/polyfill.min.js?features=default"></script>
-    <script src="https://maps.googleapis.com/maps/api/js?key={{ gmaps_key }}&callback=initMap&libraries=geometry" defer></script>
-    <style>
-        body { font-family: sans-serif; display: flex; margin: 0; height: 100vh; }
-        #map { flex: 3; height: 100%; }
-        #sidebar { flex: 1; padding: 20px; background: #f8f9fa; display: flex; flex-direction: column; gap: 15px; }
-        input, button, textarea { padding: 10px; font-size: 14px; width: 100%; box-sizing: border-box; }
-        #log { background: #fff; padding: 10px; flex-grow: 1; overflow-y: auto; border: 1px solid #ccc; font-size: 13px; line-height: 1.4; }
-        .error-text { color: red; font-weight: bold; }
-        .success-text { color: green; font-weight: bold; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UAV-LLM 3D Mission Console</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+  <style>body{margin:0;font-family:Inter,system-ui,sans-serif;background:#0a0f1d;color:#e6eef8;overflow:hidden}#app{display:grid;grid-template-columns:380px 1fr 380px;height:100vh}.panel{background:linear-gradient(180deg,#10172a,#0d1322);border-right:1px solid rgba(255,255,255,.06);overflow:auto}.right{border-left:1px solid rgba(255,255,255,.06);border-right:none}.card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:18px;padding:14px}.pill{border-radius:999px;padding:4px 10px;font-size:12px}canvas{display:block}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.btn{background:#0ea5e9;color:white;border:none;padding:10px 14px;border-radius:12px;cursor:pointer;font-weight:600}.btn2{background:#1e293b;color:#e5eef9;border:1px solid rgba(255,255,255,.08)}input,select,textarea{width:100%;background:#0f172a;color:#e6eef8;border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:10px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border-bottom:1px solid rgba(255,255,255,.08);padding:6px;text-align:left}.small{font-size:12px;color:#9fb3c8}.title{font-size:28px;font-weight:800;letter-spacing:-.03em}.sub{color:#93c5fd;font-size:12px;text-transform:uppercase;letter-spacing:.18em}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.metric{font-size:24px;font-weight:700}.ok{color:#34d399}.bad{color:#fb7185}.warn{color:#fbbf24}.section{padding:16px;display:flex;flex-direction:column;gap:12px}.logbox{max-height:200px;overflow:auto}</style>
 </head>
 <body>
-
-    <div id="sidebar">
-        <h2>Mission Control</h2>
-        <input type="text" id="origin" placeholder="Source" value="KIMS Hubballi">
-        <input type="text" id="destination" placeholder="Destination" value="SDM College Dharwad">
-        <textarea id="command" rows="4" placeholder="Natural Language Request...">Must fly over Gamanagatti to pick up a second parcel.</textarea>
-        
-        <button onclick="dispatchDrone()">Dispatch / Re-plan</button>
-        
-        <div id="log"><strong>System Log:</strong><br></div>
-    </div>
-
-    <div id="map"></div>
-
+<div id="app">
+  <aside class="panel"><div class="section"><div><div class="sub">UAV + LLM</div><div class="title">Mission Console</div><div class="small">3D semantic UAV delivery with MPDD, HNP, altitude planning, dynamic replanning, and local Ollama integration.</div></div>
+  <div class="card"><div class="font-semibold mb-2">Scenario Generator</div><div class="grid2"><label class="small">Locations<input id="n_locs" type="number" value="8"></label><label class="small">Requests<input id="n_pkg" type="number" value="5"></label><label class="small">Seed<input id="seed" type="number" value="42"></label><label class="small">No-Fly Zones<input id="n_gfz" type="number" value="4"></label><label class="small">Incompat Density<input id="inc" type="number" step="0.05" value="0.25"></label><label class="small">Deadline Tightness<input id="dt" type="number" step="0.05" value="0.65"></label><label class="small">Hazard Mix<input id="hm" type="number" step="0.05" value="0.50"></label><label class="small">Capacity Ratio<input id="cr" type="number" step="0.05" value="0.35"></label><label class="small">Wind Dir<input id="wd" type="number" step="1" value="45"></label><label class="small">LLM Error<input id="le" type="number" step="0.01" value="0.10"></label></div><div class="flex gap-2 mt-3"><button class="btn" onclick="generateWorld()">Generate</button><button class="btn btn2" onclick="checkHealth()">LLM Health</button></div><div id="health" class="small mt-2"></div></div>
+  <div class="card"><div class="font-semibold mb-2">Natural Language Semantic Parser</div><textarea id="parserText" rows="4">Deliver insulin from Pharmacy Gamma to Hospital Alpha before 30 minutes and avoid residential areas.</textarea><div class="flex gap-2 mt-2"><button class="btn" onclick="parseLLM()">Parse</button></div><pre id="parserOut" class="small mono mt-2 whitespace-pre-wrap"></pre></div>
+  <div class="card"><div class="font-semibold mb-2">Mission Editor / Mid-flight Override</div><textarea id="midflightText" rows="4">Abort package 1 and reroute to Hospital Alpha, then return to Depot.</textarea><div class="flex gap-2 mt-2"><button class="btn" onclick="midFlight()">Process Instruction</button><button class="btn btn2" onclick="injectNoFly()">Inject No-Fly + Replan</button></div><pre id="midflightOut" class="small mono mt-2 whitespace-pre-wrap"></pre></div></div></aside>
+  <main id="viewport" style="position:relative; background:radial-gradient(circle at top,#172554,#020617 60%);"><div style="position:absolute; inset:0;" id="threeContainer"></div><div style="position:absolute; left:16px; top:16px; display:flex; gap:10px;"><div class="card"><div class="small">Algorithm</div><select id="algoSelect" onchange="updateOverlay()"></select></div><div class="card"><div class="small">Playback</div><button class="btn" onclick="toggleAnim()">Play / Pause</button></div></div><div style="position:absolute; left:16px; bottom:16px; right:16px; display:grid; grid-template-columns:repeat(6,1fr); gap:10px;"><div class="card"><div class="small">Distance</div><div id="m_dist" class="metric">-</div></div><div class="card"><div class="small">Energy</div><div id="m_energy" class="metric">-</div></div><div class="card"><div class="small">Lateness</div><div id="m_late" class="metric">-</div></div><div class="card"><div class="small">Violations</div><div id="m_viol" class="metric">-</div></div><div class="card"><div class="small">Delivered</div><div id="m_delivered" class="metric">-</div></div><div class="card"><div class="small">Feasible</div><div id="m_feas" class="metric">-</div></div></div></main>
+  <aside class="panel right"><div class="section"><div class="card"><div class="font-semibold mb-2">Algorithm Comparison</div><table id="algoTable"></table></div><div class="card"><div class="font-semibold mb-2">Packages / Semantic Constraints</div><div id="pkgList" class="small"></div></div><div class="card"><div class="font-semibold mb-2">Node Timeline & Altitude</div><div id="timeline" class="small logbox"></div></div><div class="card"><div class="font-semibold mb-2">Planner Decision Log</div><div id="decLog" class="small logbox mono"></div></div></div></aside>
+</div>
 <script>
-    let map, droneMarker, flightPath;
-    let animationInterval;
-    let pathCoordinates = [];
-    let currentIndex = 0;
-
-    function initMap() {
-        // Centered closer to Hubballi/Dharwad region
-        map = new google.maps.Map(document.getElementById("map"), {
-            center: { lat: 15.3647, lng: 75.1240 }, 
-            zoom: 12,
-            mapId: "DEMO_MAP_ID"
-        });
-    }
-
-    function logMessage(msg, isError = false) {
-        const logDiv = document.getElementById("log");
-        if (isError) {
-            logDiv.innerHTML += `<span class="error-text">❌ ${msg}</span><br><hr>`;
-        } else {
-            logDiv.innerHTML += msg + "<br><hr>";
-        }
-        logDiv.scrollTop = logDiv.scrollHeight; // Auto-scroll to bottom
-    }
-
-    async function dispatchDrone() {
-        const origin = document.getElementById("origin").value;
-        const dest = document.getElementById("destination").value;
-        const command = document.getElementById("command").value;
-
-        logMessage("<i>Synthesizing constraints via LLM...</i>");
-
-        try {
-            const response = await fetch('/plan_route', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ origin: origin, destination: dest, command: command })
-            });
-
-            const data = await response.json();
-            
-            // Proper Error Catching
-            if (!response.ok) {
-                logMessage("Mission Failed: " + data.error, true);
-                return;
-            }
-
-            const c = data.constraints;
-            logMessage(`<span class="success-text">✅ Aerial Flight Path Locked</span><br>
-                        <b>Class:</b> ${c.commodity_class}<br>
-                        <b>Waypoints to Visit:</b> ${c.waypoints.join(', ') || 'None'}<br>
-                        <b>Zones to Avoid:</b> ${c.geofenced_zones.join(', ') || 'None'}`);
-
-            // NEW: Directly use the raw lat/lng coordinates sent from the backend geocoder
-            pathCoordinates = data.path_coordinates;
-            
-            if (flightPath) flightPath.setMap(null);
-            flightPath = new google.maps.Polyline({
-                path: pathCoordinates,
-                geodesic: true, // Draws a true aerial arc 
-                strokeColor: "#007BFF", // Changed to Blue for Drone Flight
-                strokeOpacity: 0.8,
-                strokeWeight: 4,
-                map: map
-            });
-
-            // Auto-adjust map to fit the whole route
-            const bounds = new google.maps.LatLngBounds();
-            pathCoordinates.forEach(coord => bounds.extend(coord));
-            map.fitBounds(bounds);
-
-            startAnimation();
-
-        } catch (err) {
-            logMessage("Network/Server Error: " + err.message, true);
-        }
-    }
-
-    function startAnimation() {
-        if (animationInterval) clearInterval(animationInterval);
-        if (droneMarker) droneMarker.setMap(null);
-
-        currentIndex = 0;
-        
-        droneMarker = new google.maps.Marker({
-            position: pathCoordinates[0],
-            map: map,
-            icon: {
-                url: "https://cdn-icons-png.flaticon.com/512/9316/9316686.png", 
-                scaledSize: new google.maps.Size(40, 40)
-            }
-        });
-
-        // Calculate smaller steps for smoother point-to-point drone animation
-        animationInterval = setInterval(() => {
-            if (currentIndex >= pathCoordinates.length - 1) {
-                clearInterval(animationInterval);
-                logMessage("<b>Mission Accomplished.</b>");
-                return;
-            }
-            
-            // Simple direct hop to the next waypoint
-            currentIndex++;
-            droneMarker.setPosition(pathCoordinates[currentIndex]);
-        }, 800); // Slowed down slightly so you can see it jump between waypoints
-    }
+let scene,camera,renderer,controls,drone,cityMeshes=[],lineObj,zones=[],animOn=true,t=0;let state={session_id:null,data:null,route3d:[],currentAlgo:'HNP'};
+function init3D(){const c=document.getElementById('threeContainer');scene=new THREE.Scene();camera=new THREE.PerspectiveCamera(55,c.clientWidth/c.clientHeight,.1,2000);camera.position.set(70,90,110);renderer=new THREE.WebGLRenderer({antialias:true});renderer.setSize(c.clientWidth,c.clientHeight);c.innerHTML='';c.appendChild(renderer.domElement);controls=new THREE.OrbitControls(camera,renderer.domElement);controls.target.set(50,0,50);controls.update();scene.add(new THREE.AmbientLight(0xffffff,.7));const dir=new THREE.DirectionalLight(0xffffff,1.1);dir.position.set(80,120,40);scene.add(dir);scene.add(new THREE.GridHelper(120,24,0x1d4ed8,0x334155));const plane=new THREE.Mesh(new THREE.PlaneGeometry(120,120),new THREE.MeshStandardMaterial({color:0x0f172a,side:THREE.DoubleSide}));plane.rotation.x=-Math.PI/2;plane.position.y=-.02;scene.add(plane);drone=new THREE.Mesh(new THREE.ConeGeometry(1.4,4,10),new THREE.MeshStandardMaterial({color:0xf59e0b,emissive:0x7c2d12}));drone.rotation.x=Math.PI;drone.position.set(50,4,50);scene.add(drone);window.addEventListener('resize',()=>{camera.aspect=c.clientWidth/c.clientHeight;camera.updateProjectionMatrix();renderer.setSize(c.clientWidth,c.clientHeight)});animate()}
+function clearScene(){[...cityMeshes,...zones].forEach(o=>scene.remove(o));cityMeshes=[];zones=[];if(lineObj)scene.remove(lineObj)}
+function worldTo3D(x,y,z=0){return new THREE.Vector3(x-50,z,y-50)}
+function renderWorld(data){clearScene();data.city.forEach(n=>{const h=Math.max(2,n.bh);const mesh=new THREE.Mesh(new THREE.BoxGeometry(3,h,3),new THREE.MeshStandardMaterial({color:n.depot?0x22c55e:0x475569,metalness:.15,roughness:.75}));mesh.position.copy(worldTo3D(n.x,n.y,h/2));scene.add(mesh);cityMeshes.push(mesh);const marker=new THREE.Mesh(new THREE.SphereGeometry(.8,16,16),new THREE.MeshStandardMaterial({color:n.depot?0x4ade80:0x93c5fd}));marker.position.copy(worldTo3D(n.x,n.y,h+1.5));scene.add(marker);cityMeshes.push(marker)});data.gzones.forEach(z=>{const cyl=new THREE.Mesh(new THREE.CylinderGeometry(z.r,z.r,.4,40),new THREE.MeshStandardMaterial({color:0xef4444,transparent:true,opacity:.25}));cyl.position.copy(worldTo3D(z.x,z.y,.2));scene.add(cyl);zones.push(cyl)});data.nzones.forEach(z=>{const cyl=new THREE.Mesh(new THREE.CylinderGeometry(z.r,z.r,.2,40),new THREE.MeshStandardMaterial({color:0xf59e0b,transparent:true,opacity:.18}));cyl.position.copy(worldTo3D(z.x,z.y,.1));scene.add(cyl);zones.push(cyl)});const algos=Object.keys(data.results);const sel=document.getElementById('algoSelect');sel.innerHTML=algos.map(a=>`<option value="${a}">${a}</option>`).join('');sel.value='HNP';updateOverlay()}
+function buildRoute3D(algo){const data=state.data;const route=data.results[algo].route;const pts=[];route.forEach((node,idx)=>{const xy=data.traj_xy[node];const alt=(data.hnp_steps[idx]&&data.hnp_steps[idx].alt)?data.hnp_steps[idx].alt:20;pts.push(worldTo3D(xy[0],xy[1],alt))});return pts}
+function drawRoute(points){if(lineObj)scene.remove(lineObj);const curve=new THREE.CatmullRomCurve3(points);lineObj=new THREE.Mesh(new THREE.TubeGeometry(curve,160,.35,10,false),new THREE.MeshStandardMaterial({color:0x38bdf8,emissive:0x0ea5e9}));scene.add(lineObj);state.route3d=curve.getPoints(300);t=0}
+function animate(){requestAnimationFrame(animate);if(animOn&&state.route3d.length>1){const idx=Math.floor(t)%state.route3d.length;const nxt=(idx+1)%state.route3d.length;const p=state.route3d[idx],q=state.route3d[nxt];drone.position.copy(p);drone.lookAt(q);t+=.8}renderer.render(scene,camera)}
+function toggleAnim(){animOn=!animOn}
+function updateOverlay(){if(!state.data)return;const algo=document.getElementById('algoSelect').value;state.currentAlgo=algo;const m=state.data.results[algo].metrics;document.getElementById('m_dist').textContent=m.dist.toFixed(1);document.getElementById('m_energy').textContent=m.energy.toFixed(1);document.getElementById('m_late').textContent=m.lateness.toFixed(1);document.getElementById('m_viol').textContent=m.viol;document.getElementById('m_delivered').textContent=`${m.delivered}/${m.n}`;document.getElementById('m_feas').innerHTML=m.feasible?'<span class="ok">YES</span>':'<span class="bad">NO</span>';drawRoute(buildRoute3D(algo));renderAlgoTable();renderPackages();renderTimeline();renderDecisionLog(algo)}
+function renderAlgoTable(){const rows=Object.entries(state.data.results).map(([k,v])=>{const m=v.metrics;return `<tr><td>${k}</td><td>${m.dist.toFixed(1)}</td><td>${m.energy.toFixed(1)}</td><td>${m.lateness.toFixed(1)}</td><td>${m.viol}</td><td>${m.feasible?'✅':'❌'}</td></tr>`}).join('');document.getElementById('algoTable').innerHTML=`<tr><th>Algo</th><th>Dist</th><th>Energy</th><th>Late</th><th>Viol</th><th>OK</th></tr>${rows}`}
+function renderPackages(){document.getElementById('pkgList').innerHTML=state.data.packages.map(p=>`<div class="card" style="margin-bottom:8px; padding:10px;"><div><span class="pill" style="background:#1d4ed8">${p.kappa}</span> <b>#${p.idx}</b> ${p.desc}</div><div class="small mt-1">weight=${p.weight}kg · deadline=${p.deadline}s · priority=${p.priority} · temp=${p.temp}</div></div>`).join('')}
+function renderTimeline(){document.getElementById('timeline').innerHTML=(state.data.hnp_steps||[]).map(s=>`<div>step ${s.step}: node ${s.node} · ${s.type}${s.req>=0?(' req='+s.req):''} · alt=${s.alt}m · xy=(${s.x.toFixed(1)},${s.y.toFixed(1)})</div>`).join('')}
+function renderDecisionLog(algo){const log=state.data.results[algo].log||[];document.getElementById('decLog').innerHTML=log.map(r=>`<div>[${r.algo}] node=${r.node} score=${r.score} cand=${r.candidates} payload=${r.payload}</div>`).join('')}
+async function generateWorld(){const body={n_locs:+n_locs.value,n_pkg:+n_pkg.value,seed:+seed.value,n_gfz:+n_gfz.value,incompat_density:+inc.value,deadline_tight:+dt.value,hazard_mix:+hm.value,cap_ratio:+cr.value,wind_dir:+wd.value,llm_error:+le.value};const res=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await res.json();state.session_id=data.session_id;state.data=data;renderWorld(data)}
+async function parseLLM(){const txt=document.getElementById('parserText').value;const res=await fetch('/api/llm/parse',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({description:txt})});const data=await res.json();document.getElementById('parserOut').textContent=JSON.stringify(data.synthesis,null,2)}
+async function midFlight(){const txt=document.getElementById('midflightText').value;const res=await fetch('/api/llm/midflight',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instruction:txt,session_id:state.session_id||'default'})});const data=await res.json();document.getElementById('midflightOut').textContent=JSON.stringify(data.action,null,2)}
+async function injectNoFly(){if(!state.session_id||!state.data)return alert('Generate a scenario first');const z={type:'nofly',x:45+Math.random()*10,y:45+Math.random()*10,r:12};const res=await fetch('/api/replan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:state.session_id,disruption:z})});const out=await res.json();state.data.results['HNP-Replan']={route:out.new_route,metrics:out.metrics,log:out.log};state.data.gzones=out.new_gzones;renderWorld(state.data);document.getElementById('algoSelect').value='HNP-Replan';updateOverlay();document.getElementById('midflightOut').textContent=JSON.stringify(out.metrics,null,2)}
+async function checkHealth(){const res=await fetch('/health');const data=await res.json();document.getElementById('health').textContent=JSON.stringify(data)}
+init3D();generateWorld();
 </script>
-
 </body>
 </html>
