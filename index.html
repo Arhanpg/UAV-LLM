@@ -1,44 +1,1119 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>UAV-LLM 3D Mission Console</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
-  <script src="https://unpkg.com/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
-  <style>body{margin:0;font-family:Inter,system-ui,sans-serif;background:#0a0f1d;color:#e6eef8;overflow:hidden}#app{display:grid;grid-template-columns:380px 1fr 380px;height:100vh}.panel{background:linear-gradient(180deg,#10172a,#0d1322);border-right:1px solid rgba(255,255,255,.06);overflow:auto}.right{border-left:1px solid rgba(255,255,255,.06);border-right:none}.card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:18px;padding:14px}.pill{border-radius:999px;padding:4px 10px;font-size:12px}canvas{display:block}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.btn{background:#0ea5e9;color:white;border:none;padding:10px 14px;border-radius:12px;cursor:pointer;font-weight:600}.btn2{background:#1e293b;color:#e5eef9;border:1px solid rgba(255,255,255,.08)}input,select,textarea{width:100%;background:#0f172a;color:#e6eef8;border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:10px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border-bottom:1px solid rgba(255,255,255,.08);padding:6px;text-align:left}.small{font-size:12px;color:#9fb3c8}.title{font-size:28px;font-weight:800;letter-spacing:-.03em}.sub{color:#93c5fd;font-size:12px;text-transform:uppercase;letter-spacing:.18em}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.metric{font-size:24px;font-weight:700}.ok{color:#34d399}.bad{color:#fb7185}.warn{color:#fbbf24}.section{padding:16px;display:flex;flex-direction:column;gap:12px}.logbox{max-height:200px;overflow:auto}</style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UAV-LLM — Real-World Semantic Drone Delivery</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0e1a;color:#e2e8f0;font-family:'Segoe UI',system-ui,sans-serif;overflow:hidden;height:100vh}
+.app{display:grid;grid-template-columns:320px 1fr 340px;grid-template-rows:56px 1fr;height:100vh}
+
+/* Header */
+.header{grid-column:1/-1;background:linear-gradient(135deg,#0f172a,#1e293b);border-bottom:1px solid #334155;
+  display:flex;align-items:center;padding:0 20px;gap:16px;z-index:200}
+.logo{font-size:1.3rem;font-weight:800;background:linear-gradient(90deg,#38bdf8,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.header-status{display:flex;gap:12px;margin-left:auto;align-items:center}
+.status-pill{padding:3px 10px;border-radius:20px;font-size:.72rem;font-weight:600}
+.pill-green{background:#064e3b;color:#34d399;border:1px solid #059669}
+.pill-red{background:#450a0a;color:#f87171;border:1px solid #dc2626}
+.pill-yellow{background:#451a03;color:#fbbf24;border:1px solid #d97706}
+btn{cursor:pointer;border:none;border-radius:8px;font-weight:600;transition:all .2s}
+
+/* Left Panel */
+.left-panel{background:#0f172a;border-right:1px solid #1e293b;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
+.panel-section{background:#1e293b;border-radius:10px;padding:12px;border:1px solid #334155}
+.section-title{font-size:.78rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.section-title .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+
+/* Map */
+#map{width:100%;height:100%;z-index:10}
+.map-wrap{position:relative;overflow:hidden}
+
+/* 3D overlay canvas for drone animation */
+#drone-canvas{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:100}
+
+/* Right Panel */
+.right-panel{background:#0f172a;border-left:1px solid #1e293b;overflow-y:auto;display:flex;flex-direction:column;gap:0}
+.rpanel-tab-bar{display:flex;border-bottom:1px solid #1e293b}
+.rpanel-tab{flex:1;padding:10px 4px;text-align:center;font-size:.72rem;font-weight:700;color:#64748b;cursor:pointer;transition:all .2s;border-bottom:2px solid transparent}
+.rpanel-tab.active{color:#38bdf8;border-bottom-color:#38bdf8;background:#0f172a}
+.rpanel-content{padding:12px;overflow-y:auto;flex:1;display:none}
+.rpanel-content.active{display:block}
+
+/* Inputs */
+select,input[type=number],input[type=text],textarea{
+  background:#0f172a;border:1px solid #334155;border-radius:6px;
+  color:#e2e8f0;padding:6px 10px;width:100%;font-size:.82rem;outline:none}
+select:focus,input:focus,textarea:focus{border-color:#38bdf8}
+textarea{resize:vertical;min-height:60px}
+label{font-size:.75rem;color:#94a3b8;margin-bottom:3px;display:block}
+.form-row{margin-bottom:8px}
+.btn-primary{background:linear-gradient(135deg,#0ea5e9,#7c3aed);color:#fff;padding:9px 14px;width:100%;font-size:.85rem;border-radius:8px}
+.btn-primary:hover{opacity:.9;transform:translateY(-1px)}
+.btn-secondary{background:#1e293b;color:#94a3b8;border:1px solid #334155;padding:7px 12px;font-size:.8rem;border-radius:6px}
+.btn-secondary:hover{background:#334155;color:#e2e8f0}
+.btn-danger{background:#7f1d1d;color:#fca5a5;border:1px solid #dc2626;padding:7px 12px;font-size:.8rem;border-radius:6px}
+.btn-danger:hover{background:#991b1b}
+.btn-row{display:flex;gap:8px;margin-top:8px}
+
+/* Algo cards */
+.algo-card{background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px;margin-bottom:8px;transition:border-color .2s}
+.algo-card.active{border-color:#38bdf8;box-shadow:0 0 12px rgba(56,189,248,.2)}
+.algo-card.best{border-color:#34d399}
+.algo-name{font-size:.82rem;font-weight:700;margin-bottom:6px}
+.metrics-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+.metric-chip{background:#1e293b;border-radius:4px;padding:4px 6px;font-size:.72rem}
+.metric-chip span{color:#38bdf8;font-weight:700}
+.feasible-badge{padding:2px 7px;border-radius:12px;font-size:.7rem;font-weight:700}
+.fb-yes{background:#064e3b;color:#34d399}
+.fb-no{background:#450a0a;color:#f87171}
+
+/* Flight log */
+.log-entry{padding:6px 8px;border-radius:6px;margin-bottom:4px;font-size:.75rem;border-left:3px solid transparent}
+.log-P{background:#0c2a44;border-left-color:#38bdf8}
+.log-D{background:#0a2e1f;border-left-color:#34d399}
+.log-DEPOT{background:#1e293b;border-left-color:#94a3b8}
+.log-step{color:#64748b;font-size:.68rem}
+
+/* NL chat */
+.chat-msg{padding:8px 10px;border-radius:8px;margin-bottom:8px;font-size:.8rem;line-height:1.5}
+.chat-user{background:#1e3a5f;border:1px solid #1e40af;margin-left:16px}
+.chat-llm{background:#1a2e1a;border:1px solid #166534;margin-right:16px}
+.chat-sys{background:#1e293b;border:1px solid #334155;text-align:center;font-size:.72rem;color:#64748b}
+
+/* Compat graph canvas */
+#compat-canvas{width:100%;border-radius:8px;background:#0f172a}
+
+/* Progress bar */
+.prog-bar-wrap{background:#1e293b;border-radius:4px;height:6px;overflow:hidden;margin-top:4px}
+.prog-bar{height:100%;border-radius:4px;background:linear-gradient(90deg,#38bdf8,#7c3aed);transition:width .4s}
+
+/* Node list */
+.node-pill{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;margin-bottom:4px;background:#1e293b;border:1px solid #334155;font-size:.78rem}
+.node-pill .cat-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.cat-hospital{background:#f87171}
+.cat-mall{background:#a78bfa}
+.cat-park{background:#34d399}
+.cat-office{background:#38bdf8}
+.cat-transit{background:#fbbf24}
+.cat-market{background:#fb923c}
+.cat-residential{background:#94a3b8}
+.cat-govt{background:#c084fc}
+.cat-airbase{background:#e2e8f0}
+.cat-religious{background:#fde68a}
+.cat-commercial{background:#67e8f9}
+
+/* Drone indicator */
+#drone-info{position:absolute;bottom:70px;left:50%;transform:translateX(-50%);
+  background:rgba(15,23,42,.9);border:1px solid #38bdf8;border-radius:10px;
+  padding:8px 16px;z-index:500;display:none;backdrop-filter:blur(8px);min-width:260px;text-align:center}
+.di-label{font-size:.72rem;color:#64748b}
+.di-value{font-size:.95rem;font-weight:700;color:#38bdf8}
+
+/* Algo trace panel */
+.trace-entry{font-size:.72rem;padding:5px 8px;border-radius:5px;margin-bottom:3px;background:#0f172a;border:1px solid #1e293b;font-family:monospace}
+.trace-entry .te-key{color:#94a3b8}
+.trace-entry .te-val{color:#38bdf8}
+
+/* scrollbar */
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:#0f172a}
+::-webkit-scrollbar-thumb{background:#334155;border-radius:3px}
+
+/* altitude bar */
+#alt-bar-wrap{position:absolute;right:10px;top:70px;bottom:70px;width:32px;z-index:300;
+  background:rgba(15,23,42,.8);border:1px solid #334155;border-radius:8px;display:none;
+  flex-direction:column;align-items:center;justify-content:space-between;padding:4px 2px}
+#alt-bar{width:14px;border-radius:4px;background:linear-gradient(180deg,#38bdf8,#7c3aed);transition:height .5s;margin:auto;position:absolute;bottom:4px;left:50%;transform:translateX(-50%)}
+.alt-label{font-size:.6rem;color:#64748b;writing-mode:vertical-lr;transform:rotate(180deg);position:absolute;right:-2px}
+
+.separator{height:1px;background:#1e293b;margin:8px 0}
+.tag{display:inline-block;padding:2px 6px;border-radius:4px;font-size:.68rem;font-weight:700;margin:2px}
+.tag-pharma{background:#1e3a5f;color:#93c5fd}
+.tag-flammable{background:#431407;color:#fdba74}
+.tag-oxidizer{background:#431407;color:#fbbf24}
+.tag-cryogenic{background:#0c2e5c;color:#bae6fd}
+.tag-food{background:#0a2e1f;color:#86efac}
+.tag-electronics{background:#2e1065;color:#c4b5fd}
+.tag-general{background:#1e293b;color:#94a3b8}
+
+.speed-row{display:flex;align-items:center;gap:8px;margin-top:6px}
+.speed-row label{margin:0;white-space:nowrap;font-size:.78rem}
+#anim-speed{width:100%;accent-color:#38bdf8}
+
+.location-select-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;max-height:160px;overflow-y:auto}
+.loc-check{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:5px;background:#0f172a;border:1px solid #1e293b;cursor:pointer;font-size:.75rem}
+.loc-check:hover{border-color:#334155}
+.loc-check input[type=checkbox]{accent-color:#38bdf8}
+
+.pkg-builder{border:1px solid #334155;border-radius:8px;padding:10px;margin-bottom:8px;background:#0f172a}
+.pkg-builder .pkg-title{font-size:.78rem;font-weight:700;color:#94a3b8;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+.remove-pkg{background:#450a0a;color:#f87171;border:1px solid #dc2626;border-radius:4px;padding:2px 8px;font-size:.72rem;cursor:pointer}
+
+/* loading overlay */
+#loading{position:fixed;inset:0;background:rgba(10,14,26,.95);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
+#loading.hidden{display:none}
+.spinner{width:48px;height:48px;border:4px solid #1e293b;border-top-color:#38bdf8;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.load-text{font-size:.95rem;color:#94a3b8}
+.load-algo{font-size:.8rem;color:#38bdf8;font-family:monospace}
+</style>
 </head>
 <body>
-<div id="app">
-  <aside class="panel"><div class="section"><div><div class="sub">UAV + LLM</div><div class="title">Mission Console</div><div class="small">3D semantic UAV delivery with MPDD, HNP, altitude planning, dynamic replanning, and local Ollama integration.</div></div>
-  <div class="card"><div class="font-semibold mb-2">Scenario Generator</div><div class="grid2"><label class="small">Locations<input id="n_locs" type="number" value="8"></label><label class="small">Requests<input id="n_pkg" type="number" value="5"></label><label class="small">Seed<input id="seed" type="number" value="42"></label><label class="small">No-Fly Zones<input id="n_gfz" type="number" value="4"></label><label class="small">Incompat Density<input id="inc" type="number" step="0.05" value="0.25"></label><label class="small">Deadline Tightness<input id="dt" type="number" step="0.05" value="0.65"></label><label class="small">Hazard Mix<input id="hm" type="number" step="0.05" value="0.50"></label><label class="small">Capacity Ratio<input id="cr" type="number" step="0.05" value="0.35"></label><label class="small">Wind Dir<input id="wd" type="number" step="1" value="45"></label><label class="small">LLM Error<input id="le" type="number" step="0.01" value="0.10"></label></div><div class="flex gap-2 mt-3"><button class="btn" onclick="generateWorld()">Generate</button><button class="btn btn2" onclick="checkHealth()">LLM Health</button></div><div id="health" class="small mt-2"></div></div>
-  <div class="card"><div class="font-semibold mb-2">Natural Language Semantic Parser</div><textarea id="parserText" rows="4">Deliver insulin from Pharmacy Gamma to Hospital Alpha before 30 minutes and avoid residential areas.</textarea><div class="flex gap-2 mt-2"><button class="btn" onclick="parseLLM()">Parse</button></div><pre id="parserOut" class="small mono mt-2 whitespace-pre-wrap"></pre></div>
-  <div class="card"><div class="font-semibold mb-2">Mission Editor / Mid-flight Override</div><textarea id="midflightText" rows="4">Abort package 1 and reroute to Hospital Alpha, then return to Depot.</textarea><div class="flex gap-2 mt-2"><button class="btn" onclick="midFlight()">Process Instruction</button><button class="btn btn2" onclick="injectNoFly()">Inject No-Fly + Replan</button></div><pre id="midflightOut" class="small mono mt-2 whitespace-pre-wrap"></pre></div></div></aside>
-  <main id="viewport" style="position:relative; background:radial-gradient(circle at top,#172554,#020617 60%);"><div style="position:absolute; inset:0;" id="threeContainer"></div><div style="position:absolute; left:16px; top:16px; display:flex; gap:10px;"><div class="card"><div class="small">Algorithm</div><select id="algoSelect" onchange="updateOverlay()"></select></div><div class="card"><div class="small">Playback</div><button class="btn" onclick="toggleAnim()">Play / Pause</button></div></div><div style="position:absolute; left:16px; bottom:16px; right:16px; display:grid; grid-template-columns:repeat(6,1fr); gap:10px;"><div class="card"><div class="small">Distance</div><div id="m_dist" class="metric">-</div></div><div class="card"><div class="small">Energy</div><div id="m_energy" class="metric">-</div></div><div class="card"><div class="small">Lateness</div><div id="m_late" class="metric">-</div></div><div class="card"><div class="small">Violations</div><div id="m_viol" class="metric">-</div></div><div class="card"><div class="small">Delivered</div><div id="m_delivered" class="metric">-</div></div><div class="card"><div class="small">Feasible</div><div id="m_feas" class="metric">-</div></div></div></main>
-  <aside class="panel right"><div class="section"><div class="card"><div class="font-semibold mb-2">Algorithm Comparison</div><table id="algoTable"></table></div><div class="card"><div class="font-semibold mb-2">Packages / Semantic Constraints</div><div id="pkgList" class="small"></div></div><div class="card"><div class="font-semibold mb-2">Node Timeline & Altitude</div><div id="timeline" class="small logbox"></div></div><div class="card"><div class="font-semibold mb-2">Planner Decision Log</div><div id="decLog" class="small logbox mono"></div></div></div></aside>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <div class="load-text">UAV-LLM Initializing...</div>
+  <div class="load-algo" id="load-algo-text">Loading algorithms...</div>
 </div>
+
+<div class="app">
+
+<!-- HEADER -->
+<div class="header">
+  <div class="logo">🛸 UAV-LLM</div>
+  <span style="font-size:.78rem;color:#64748b">Semantic Multi-Commodity Drone Delivery — Real-World Bengaluru</span>
+  <div class="header-status">
+    <span id="ollama-pill" class="status-pill pill-yellow">LLM: Checking...</span>
+    <span id="session-pill" class="status-pill pill-yellow">No Session</span>
+    <span id="drone-state-pill" class="status-pill pill-red">Drone: Idle</span>
+  </div>
+</div>
+
+<!-- LEFT PANEL -->
+<div class="left-panel">
+
+  <!-- Mission Config -->
+  <div class="panel-section">
+    <div class="section-title"><span class="dot" style="background:#38bdf8"></span>Mission Setup</div>
+
+    <div class="form-row">
+      <label>Depot (Start/End)</label>
+      <select id="depot-select">
+        <option value="0">SDM Hospital (Default)</option>
+      </select>
+    </div>
+
+    <div class="form-row">
+      <label>Active Locations (select all stops)</label>
+      <div class="location-select-grid" id="loc-grid"></div>
+    </div>
+
+    <div class="separator"></div>
+    <div class="section-title" style="margin-top:4px"><span class="dot" style="background:#a78bfa"></span>Packages</div>
+    <div id="pkg-list"></div>
+    <button class="btn-secondary" onclick="addPkgForm()" style="width:100%;margin-bottom:8px">+ Add Package</button>
+
+    <div class="separator"></div>
+    <div class="form-row">
+      <label>UAV Capacity Ratio (of total weight)</label>
+      <input type="number" id="cap-ratio" value="0.35" step="0.05" min="0.2" max="1">
+    </div>
+    <div class="form-row">
+      <label>Hazard Mix (0=safe, 1=all hazardous)</label>
+      <input type="number" id="hazard-mix" value="0.5" step="0.1" min="0" max="1">
+    </div>
+    <div class="form-row">
+      <label>No-Fly Zones</label>
+      <input type="number" id="n-gfz" value="3" min="0" max="8">
+    </div>
+    <div class="form-row">
+      <label>Wind Direction (°)</label>
+      <input type="number" id="wind-dir" value="45" min="0" max="360">
+    </div>
+    <div class="form-row">
+      <label>LLM Error Rate (0=perfect)</label>
+      <input type="number" id="llm-error" value="0.1" step="0.05" min="0" max="0.8">
+    </div>
+
+    <button class="btn-primary" onclick="runMission()">&#9654; Run Mission</button>
+  </div>
+
+  <!-- Initial NL Instruction -->
+  <div class="panel-section">
+    <div class="section-title"><span class="dot" style="background:#34d399"></span>Initial NL Instruction</div>
+    <div class="form-row">
+      <label>Describe mission in plain language</label>
+      <textarea id="initial-nl" placeholder="e.g. Pick up insulin from SDM Hospital, deliver to Manipal Hospital before 14:00, then collect electronics from Whitefield IT Park and return"></textarea>
+    </div>
+    <button class="btn-secondary" style="width:100%" onclick="sendInitialNL()">&#129302; Parse with GLM4</button>
+    <div id="nl-parse-result" style="margin-top:8px;font-size:.75rem;color:#64748b"></div>
+  </div>
+
+  <!-- Disruption -->
+  <div class="panel-section">
+    <div class="section-title"><span class="dot" style="background:#f87171"></span>Disruption / Replan</div>
+    <div class="form-row">
+      <label>Event Type</label>
+      <select id="disrupt-type">
+        <option value="nofly">Emergency No-Fly Zone</option>
+        <option value="weather">Weather Disruption</option>
+        <option value="abort">Abort Package</option>
+      </select>
+    </div>
+    <div style="font-size:.72rem;color:#64748b;margin-bottom:6px">Click on map to place no-fly zone, or use button:</div>
+    <button class="btn-danger" style="width:100%" onclick="triggerReplan()">&#9888; Trigger Replan</button>
+  </div>
+
+  <!-- Animation control -->
+  <div class="panel-section">
+    <div class="section-title"><span class="dot" style="background:#fbbf24"></span>Animation</div>
+    <div class="btn-row">
+      <button class="btn-primary" style="flex:1" onclick="playAnimation()">&#9654; Play</button>
+      <button class="btn-secondary" onclick="pauseAnimation()">&#9646;&#9646; Pause</button>
+      <button class="btn-secondary" onclick="resetAnimation()">&#8635; Reset</button>
+    </div>
+    <div class="speed-row">
+      <label>Speed:</label>
+      <input type="range" id="anim-speed" min="1" max="20" value="5">
+      <span id="speed-val" style="font-size:.75rem;color:#38bdf8">5x</span>
+    </div>
+    <div style="margin-top:8px">
+      <label>Algorithm to animate</label>
+      <select id="anim-algo">
+        <option value="HNP">HNP (Recommended)</option>
+        <option value="MPDD">MPDD</option>
+        <option value="NN-PDP">NN-PDP</option>
+        <option value="HNP-NoVerify">HNP-NoVerify</option>
+        <option value="HNP-NoCompat">HNP-NoCompat</option>
+        <option value="HNP-NoRefine">HNP-NoRefine</option>
+      </select>
+    </div>
+  </div>
+
+</div><!-- end left -->
+
+<!-- MAP CENTER -->
+<div class="map-wrap" style="position:relative">
+  <div id="map"></div>
+  <canvas id="drone-canvas"></canvas>
+  <div id="drone-info">
+    <div class="di-label">Current Node</div>
+    <div class="di-value" id="di-node">-</div>
+    <div style="display:flex;gap:16px;justify-content:center;margin-top:4px">
+      <div><div class="di-label">Altitude</div><div class="di-value" id="di-alt">-</div></div>
+      <div><div class="di-label">Payload</div><div class="di-value" id="di-payload">-</div></div>
+      <div><div class="di-label">Elapsed</div><div class="di-value" id="di-time">-</div></div>
+    </div>
+    <div style="margin-top:4px;font-size:.72rem;color:#a78bfa" id="di-action"></div>
+  </div>
+  <div id="alt-bar-wrap">
+    <div style="font-size:.6rem;color:#64748b;text-align:center">ALT</div>
+    <div style="position:relative;flex:1;width:100%">
+      <div id="alt-bar" style="height:40%;width:14px"></div>
+      <span class="alt-label" id="alt-label-val">30m</span>
+    </div>
+    <div style="font-size:.6rem;color:#64748b">0m</div>
+  </div>
+</div>
+
+<!-- RIGHT PANEL -->
+<div class="right-panel">
+  <div class="rpanel-tab-bar">
+    <div class="rpanel-tab active" onclick="switchTab('algos')">Algorithms</div>
+    <div class="rpanel-tab" onclick="switchTab('flight')">Flight Log</div>
+    <div class="rpanel-tab" onclick="switchTab('chat')">LLM Chat</div>
+    <div class="rpanel-tab" onclick="switchTab('compat')">Compat</div>
+  </div>
+
+  <!-- Algorithms tab -->
+  <div class="rpanel-content active" id="tab-algos">
+    <div style="font-size:.75rem;color:#64748b;margin-bottom:8px">All 6 algorithms run in parallel. Green = best semantic cost.</div>
+    <div id="algo-cards"></div>
+    <div class="separator"></div>
+    <div style="font-size:.75rem;color:#64748b;margin-bottom:6px">Algorithm Step Trace</div>
+    <div id="algo-trace"></div>
+    <canvas id="metrics-chart" style="margin-top:8px;border-radius:8px"></canvas>
+  </div>
+
+  <!-- Flight log tab -->
+  <div class="rpanel-content" id="tab-flight">
+    <div style="font-size:.75rem;color:#64748b;margin-bottom:8px">HNP route — step by step</div>
+    <div id="flight-log"></div>
+  </div>
+
+  <!-- LLM Chat tab -->
+  <div class="rpanel-content" id="tab-chat">
+    <div id="chat-log">
+      <div class="chat-msg chat-sys">Send natural language instructions mid-flight. GLM4 processes via Ollama.</div>
+    </div>
+    <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">
+      <textarea id="chat-input" placeholder="e.g. Avoid the industrial area and deliver insulin first..." style="height:64px"></textarea>
+      <button class="btn-primary" onclick="sendChatMsg()">Send to GLM4 ➤</button>
+    </div>
+    <!-- Verification log -->
+    <div class="separator"></div>
+    <div style="font-size:.75rem;color:#64748b;margin-bottom:6px">SMT Verifier Log</div>
+    <div id="verif-log"></div>
+  </div>
+
+  <!-- Compat tab -->
+  <div class="rpanel-content" id="tab-compat">
+    <div style="font-size:.75rem;color:#64748b;margin-bottom:8px">Commodity compatibility graph Gc. Red = incompatible (cannot co-transport).</div>
+    <canvas id="compat-canvas" height="280"></canvas>
+    <div class="separator"></div>
+    <div style="font-size:.75rem;color:#64748b;margin-bottom:6px">Fixed Incompatibilities (FAA)</div>
+    <div id="fixed-incompat"></div>
+    <div class="separator"></div>
+    <div style="font-size:.75rem;color:#64748b;margin-bottom:6px">Packages</div>
+    <div id="pkg-display"></div>
+  </div>
+</div>
+
+</div><!-- app -->
+
 <script>
-let scene,camera,renderer,controls,drone,cityMeshes=[],lineObj,zones=[],animOn=true,t=0;let state={session_id:null,data:null,route3d:[],currentAlgo:'HNP'};
-function init3D(){const c=document.getElementById('threeContainer');scene=new THREE.Scene();camera=new THREE.PerspectiveCamera(55,c.clientWidth/c.clientHeight,.1,2000);camera.position.set(70,90,110);renderer=new THREE.WebGLRenderer({antialias:true});renderer.setSize(c.clientWidth,c.clientHeight);c.innerHTML='';c.appendChild(renderer.domElement);controls=new THREE.OrbitControls(camera,renderer.domElement);controls.target.set(50,0,50);controls.update();scene.add(new THREE.AmbientLight(0xffffff,.7));const dir=new THREE.DirectionalLight(0xffffff,1.1);dir.position.set(80,120,40);scene.add(dir);scene.add(new THREE.GridHelper(120,24,0x1d4ed8,0x334155));const plane=new THREE.Mesh(new THREE.PlaneGeometry(120,120),new THREE.MeshStandardMaterial({color:0x0f172a,side:THREE.DoubleSide}));plane.rotation.x=-Math.PI/2;plane.position.y=-.02;scene.add(plane);drone=new THREE.Mesh(new THREE.ConeGeometry(1.4,4,10),new THREE.MeshStandardMaterial({color:0xf59e0b,emissive:0x7c2d12}));drone.rotation.x=Math.PI;drone.position.set(50,4,50);scene.add(drone);window.addEventListener('resize',()=>{camera.aspect=c.clientWidth/c.clientHeight;camera.updateProjectionMatrix();renderer.setSize(c.clientWidth,c.clientHeight)});animate()}
-function clearScene(){[...cityMeshes,...zones].forEach(o=>scene.remove(o));cityMeshes=[];zones=[];if(lineObj)scene.remove(lineObj)}
-function worldTo3D(x,y,z=0){return new THREE.Vector3(x-50,z,y-50)}
-function renderWorld(data){clearScene();data.city.forEach(n=>{const h=Math.max(2,n.bh);const mesh=new THREE.Mesh(new THREE.BoxGeometry(3,h,3),new THREE.MeshStandardMaterial({color:n.depot?0x22c55e:0x475569,metalness:.15,roughness:.75}));mesh.position.copy(worldTo3D(n.x,n.y,h/2));scene.add(mesh);cityMeshes.push(mesh);const marker=new THREE.Mesh(new THREE.SphereGeometry(.8,16,16),new THREE.MeshStandardMaterial({color:n.depot?0x4ade80:0x93c5fd}));marker.position.copy(worldTo3D(n.x,n.y,h+1.5));scene.add(marker);cityMeshes.push(marker)});data.gzones.forEach(z=>{const cyl=new THREE.Mesh(new THREE.CylinderGeometry(z.r,z.r,.4,40),new THREE.MeshStandardMaterial({color:0xef4444,transparent:true,opacity:.25}));cyl.position.copy(worldTo3D(z.x,z.y,.2));scene.add(cyl);zones.push(cyl)});data.nzones.forEach(z=>{const cyl=new THREE.Mesh(new THREE.CylinderGeometry(z.r,z.r,.2,40),new THREE.MeshStandardMaterial({color:0xf59e0b,transparent:true,opacity:.18}));cyl.position.copy(worldTo3D(z.x,z.y,.1));scene.add(cyl);zones.push(cyl)});const algos=Object.keys(data.results);const sel=document.getElementById('algoSelect');sel.innerHTML=algos.map(a=>`<option value="${a}">${a}</option>`).join('');sel.value='HNP';updateOverlay()}
-function buildRoute3D(algo){const data=state.data;const route=data.results[algo].route;const pts=[];route.forEach((node,idx)=>{const xy=data.traj_xy[node];const alt=(data.hnp_steps[idx]&&data.hnp_steps[idx].alt)?data.hnp_steps[idx].alt:20;pts.push(worldTo3D(xy[0],xy[1],alt))});return pts}
-function drawRoute(points){if(lineObj)scene.remove(lineObj);const curve=new THREE.CatmullRomCurve3(points);lineObj=new THREE.Mesh(new THREE.TubeGeometry(curve,160,.35,10,false),new THREE.MeshStandardMaterial({color:0x38bdf8,emissive:0x0ea5e9}));scene.add(lineObj);state.route3d=curve.getPoints(300);t=0}
-function animate(){requestAnimationFrame(animate);if(animOn&&state.route3d.length>1){const idx=Math.floor(t)%state.route3d.length;const nxt=(idx+1)%state.route3d.length;const p=state.route3d[idx],q=state.route3d[nxt];drone.position.copy(p);drone.lookAt(q);t+=.8}renderer.render(scene,camera)}
-function toggleAnim(){animOn=!animOn}
-function updateOverlay(){if(!state.data)return;const algo=document.getElementById('algoSelect').value;state.currentAlgo=algo;const m=state.data.results[algo].metrics;document.getElementById('m_dist').textContent=m.dist.toFixed(1);document.getElementById('m_energy').textContent=m.energy.toFixed(1);document.getElementById('m_late').textContent=m.lateness.toFixed(1);document.getElementById('m_viol').textContent=m.viol;document.getElementById('m_delivered').textContent=`${m.delivered}/${m.n}`;document.getElementById('m_feas').innerHTML=m.feasible?'<span class="ok">YES</span>':'<span class="bad">NO</span>';drawRoute(buildRoute3D(algo));renderAlgoTable();renderPackages();renderTimeline();renderDecisionLog(algo)}
-function renderAlgoTable(){const rows=Object.entries(state.data.results).map(([k,v])=>{const m=v.metrics;return `<tr><td>${k}</td><td>${m.dist.toFixed(1)}</td><td>${m.energy.toFixed(1)}</td><td>${m.lateness.toFixed(1)}</td><td>${m.viol}</td><td>${m.feasible?'✅':'❌'}</td></tr>`}).join('');document.getElementById('algoTable').innerHTML=`<tr><th>Algo</th><th>Dist</th><th>Energy</th><th>Late</th><th>Viol</th><th>OK</th></tr>${rows}`}
-function renderPackages(){document.getElementById('pkgList').innerHTML=state.data.packages.map(p=>`<div class="card" style="margin-bottom:8px; padding:10px;"><div><span class="pill" style="background:#1d4ed8">${p.kappa}</span> <b>#${p.idx}</b> ${p.desc}</div><div class="small mt-1">weight=${p.weight}kg · deadline=${p.deadline}s · priority=${p.priority} · temp=${p.temp}</div></div>`).join('')}
-function renderTimeline(){document.getElementById('timeline').innerHTML=(state.data.hnp_steps||[]).map(s=>`<div>step ${s.step}: node ${s.node} · ${s.type}${s.req>=0?(' req='+s.req):''} · alt=${s.alt}m · xy=(${s.x.toFixed(1)},${s.y.toFixed(1)})</div>`).join('')}
-function renderDecisionLog(algo){const log=state.data.results[algo].log||[];document.getElementById('decLog').innerHTML=log.map(r=>`<div>[${r.algo}] node=${r.node} score=${r.score} cand=${r.candidates} payload=${r.payload}</div>`).join('')}
-async function generateWorld(){const body={n_locs:+n_locs.value,n_pkg:+n_pkg.value,seed:+seed.value,n_gfz:+n_gfz.value,incompat_density:+inc.value,deadline_tight:+dt.value,hazard_mix:+hm.value,cap_ratio:+cr.value,wind_dir:+wd.value,llm_error:+le.value};const res=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await res.json();state.session_id=data.session_id;state.data=data;renderWorld(data)}
-async function parseLLM(){const txt=document.getElementById('parserText').value;const res=await fetch('/api/llm/parse',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({description:txt})});const data=await res.json();document.getElementById('parserOut').textContent=JSON.stringify(data.synthesis,null,2)}
-async function midFlight(){const txt=document.getElementById('midflightText').value;const res=await fetch('/api/llm/midflight',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instruction:txt,session_id:state.session_id||'default'})});const data=await res.json();document.getElementById('midflightOut').textContent=JSON.stringify(data.action,null,2)}
-async function injectNoFly(){if(!state.session_id||!state.data)return alert('Generate a scenario first');const z={type:'nofly',x:45+Math.random()*10,y:45+Math.random()*10,r:12};const res=await fetch('/api/replan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:state.session_id,disruption:z})});const out=await res.json();state.data.results['HNP-Replan']={route:out.new_route,metrics:out.metrics,log:out.log};state.data.gzones=out.new_gzones;renderWorld(state.data);document.getElementById('algoSelect').value='HNP-Replan';updateOverlay();document.getElementById('midflightOut').textContent=JSON.stringify(out.metrics,null,2)}
-async function checkHealth(){const res=await fetch('/health');const data=await res.json();document.getElementById('health').textContent=JSON.stringify(data)}
-init3D();generateWorld();
+// ======================== STATE ========================
+const API = '';
+let state = {
+  session_id: null,
+  world: null,
+  flight_path: [],
+  animIdx: 0,
+  animPlaying: false,
+  animTimer: null,
+  droneMarker: null,
+  routePolylines: [],
+  nodeMarkers: [],
+  gzoneCircles: [],
+  metricsChart: null,
+  compatChart: null,
+  clickedDisrupt: null,
+  currentAlgo: 'HNP',
+  allLocations: []
+};
+
+// ======================== LEAFLET MAP ========================
+const map = L.map('map', {
+  center: [12.9716, 77.5946],
+  zoom: 13,
+  zoomControl: true
+});
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap contributors',
+  maxZoom: 19
+}).addTo(map);
+
+// Map click for disruption placement
+map.on('click', function(e) {
+  state.clickedDisrupt = e.latlng;
+  // Show temp marker
+  if (state._disruptMarker) map.removeLayer(state._disruptMarker);
+  state._disruptMarker = L.circle([e.latlng.lat, e.latlng.lng], {
+    radius: 200, color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.2,
+    dashArray: '6 4'
+  }).addTo(map);
+});
+
+// ======================== INIT ========================
+async function init() {
+  try {
+    const r = await fetch(`${API}/health`);
+    const d = await r.json();
+    const pill = document.getElementById('ollama-pill');
+    if (d.ollama) {
+      pill.textContent = `LLM: ${d.model}`;
+      pill.className = 'status-pill pill-green';
+    } else {
+      pill.textContent = 'LLM: Offline';
+      pill.className = 'status-pill pill-red';
+    }
+  } catch(e) {
+    document.getElementById('ollama-pill').textContent = 'Backend: Offline';
+    document.getElementById('ollama-pill').className = 'status-pill pill-red';
+  }
+
+  // Load locations
+  try {
+    const r = await fetch(`${API}/api/locations`);
+    const d = await r.json();
+    state.allLocations = d.locations;
+    populateLocationUI();
+  } catch(e) {
+    console.warn('Could not load locations', e);
+  }
+
+  document.getElementById('loading').classList.add('hidden');
+}
+
+function populateLocationUI() {
+  const locs = state.allLocations;
+  // Depot select
+  const ds = document.getElementById('depot-select');
+  ds.innerHTML = '';
+  locs.forEach((l,i) => {
+    const o = document.createElement('option');
+    o.value = i; o.textContent = `${l.name}`;
+    ds.appendChild(o);
+  });
+
+  // Location grid
+  const grid = document.getElementById('loc-grid');
+  grid.innerHTML = '';
+  locs.forEach((l,i) => {
+    const div = document.createElement('label');
+    div.className = 'loc-check';
+    div.innerHTML = `<input type="checkbox" value="${i}" ${i<10?'checked':''}> <span style="font-size:.7rem">${l.name}</span>`;
+    grid.appendChild(div);
+  });
+}
+
+// ======================== PACKAGE FORMS ========================
+let pkgForms = [];
+function addPkgForm() {
+  const idx = pkgForms.length;
+  pkgForms.push({idx});
+  renderPkgForms();
+}
+function removePkg(idx) {
+  pkgForms = pkgForms.filter((_,i)=>i!==idx);
+  renderPkgForms();
+}
+function renderPkgForms() {
+  const locs = state.allLocations;
+  const locOpts = locs.map((l,i)=>`<option value="${l.name}">${l.name}</option>`).join('');
+  document.getElementById('pkg-list').innerHTML = pkgForms.map((p,i)=>`
+    <div class="pkg-builder">
+      <div class="pkg-title">Package #${i+1}
+        <button class="remove-pkg" onclick="removePkg(${i})">Remove</button>
+      </div>
+      <div class="form-row"><label>Pickup Location</label>
+        <select id="pkg-pu-${i}">${locOpts}</select></div>
+      <div class="form-row"><label>Delivery Location</label>
+        <select id="pkg-dl-${i}">${locOpts}</select></div>
+      <div class="form-row"><label>Cargo Type</label>
+        <select id="pkg-kappa-${i}">
+          <option>PHARMA</option><option>FOOD</option><option>ELECTRONICS</option>
+          <option>FLAMMABLE</option><option>OXIDIZER</option><option>CRYOGENIC</option><option selected>GENERAL</option>
+        </select></div>
+      <div class="form-row"><label>Weight (kg)</label>
+        <input type="number" id="pkg-w-${i}" value="2.5" min="0.5" max="10" step="0.5"></div>
+      <div class="form-row"><label>Description (optional)</label>
+        <input type="text" id="pkg-desc-${i}" placeholder="e.g. Insulin for ICU"></div>
+    </div>
+  `).join('');
+}
+
+// ======================== RUN MISSION ========================
+async function runMission() {
+  setLoading(true, 'Running MPDD + HNP algorithms...');
+
+  // Get selected locations
+  const depotIdx = parseInt(document.getElementById('depot-select').value);
+  const checkedLocs = Array.from(document.querySelectorAll('#loc-grid input[type=checkbox]:checked'))
+    .map(el => parseInt(el.value));
+  // Ensure depot is first
+  let locIndices = [depotIdx, ...checkedLocs.filter(i=>i!==depotIdx)];
+  if (locIndices.length < 2) locIndices = list(range(10));
+
+  // Build pkg requests
+  const pkgRequests = pkgForms.map((p,i) => ({
+    pickup_name: document.getElementById(`pkg-pu-${i}`)?.value || '',
+    delivery_name: document.getElementById(`pkg-dl-${i}`)?.value || '',
+    kappa: document.getElementById(`pkg-kappa-${i}`)?.value || 'GENERAL',
+    weight: parseFloat(document.getElementById(`pkg-w-${i}`)?.value || '2'),
+    description: document.getElementById(`pkg-desc-${i}`)?.value || ''
+  }));
+
+  const body = {
+    loc_indices: locIndices,
+    pkg_requests: pkgRequests,
+    seed: 42,
+    incompat_density: 0.25,
+    n_gfz: parseInt(document.getElementById('n-gfz').value),
+    deadline_tight: 0.65,
+    hazard_mix: parseFloat(document.getElementById('hazard-mix').value),
+    cap_ratio: parseFloat(document.getElementById('cap-ratio').value),
+    wind_dir: parseFloat(document.getElementById('wind-dir').value),
+    llm_error: parseFloat(document.getElementById('llm-error').value)
+  };
+
+  try {
+    const r = await fetch(`${API}/api/generate`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const data = await r.json();
+    state.world = data;
+    state.session_id = data.session_id;
+    document.getElementById('session-pill').textContent = `Session: ${data.session_id}`;
+    document.getElementById('session-pill').className = 'status-pill pill-green';
+    renderWorld(data);
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+  setLoading(false);
+}
+
+// ======================== RENDER WORLD ========================
+function renderWorld(data) {
+  clearMap();
+
+  // Pan map to origin
+  if (data.origin) map.setView([data.origin.lat, data.origin.lon], 13);
+
+  // Draw city nodes
+  data.city.forEach(n => {
+    const color = catColor(n.category);
+    const icon = L.divIcon({
+      html: `<div style="background:${color};width:${n.depot?20:14}px;height:${n.depot?20:14}px;border-radius:50%;
+             border:2px solid ${n.depot?'#38bdf8':'rgba(255,255,255,0.5)'};
+             box-shadow:0 0 ${n.depot?'12px':'6px'} ${color}66"></div>`,
+      className:'', iconAnchor:[7,7]
+    });
+    const m = L.marker([n.lat, n.lon], {icon})
+      .addTo(map)
+      .bindPopup(nodePopup(n, data));
+    state.nodeMarkers.push(m);
+  });
+
+  // Draw geo zones
+  data.gzones.forEach(z => {
+    const node = data.city.find(c => Math.abs(c.x-z.x)<200 && Math.abs(c.y-z.y)<200);
+    const lat = node ? node.lat + (z.y - node.y)/111111 : data.origin.lat + z.y/111111;
+    const lon = node ? node.lon + (z.x - node.x)/(111111*Math.cos(node.lat*Math.PI/180)) : data.origin.lon + z.x/111111;
+    const c = L.circle([lat, lon], {
+      radius: z.r, color:'#ef4444', fillColor:'#ef4444',
+      fillOpacity:0.15, dashArray:'8 4', weight:2
+    }).addTo(map).bindTooltip(z.label, {permanent:false});
+    state.gzoneCircles.push(c);
+  });
+
+  // Draw noise zones
+  data.nzones.forEach(z => {
+    const node = data.city.find(c => Math.abs(c.x-z.x)<300 && Math.abs(c.y-z.y)<300);
+    const lat = node ? node.lat + (z.y - node.y)/111111 : data.origin.lat + z.y/111111;
+    const lon = node ? node.lon + (z.x - node.x)/(111111*Math.cos(node.lat*Math.PI/180)) : data.origin.lon + z.x/111111;
+    L.circle([lat, lon], {
+      radius: z.r, color:'#fbbf24', fillColor:'#fbbf24',
+      fillOpacity:0.08, dashArray:'4 6', weight:1
+    }).addTo(map).bindTooltip(`🔊 ${z.label}`, {permanent:false});
+  });
+
+  // Draw HNP route
+  drawRoute(data, 'HNP');
+
+  // Right panel
+  renderAlgoCards(data);
+  renderFlightLog(data.flight_path);
+  renderCompatGraph(data);
+  renderPkgDisplay(data);
+  renderVerifLog(data.results?.HNP?.verif_log || []);
+  renderMetricsChart(data);
+
+  // Init drone
+  state.flight_path = data.flight_path;
+  state.animIdx = 0;
+  state.currentAlgo = 'HNP';
+  document.getElementById('drone-state-pill').textContent = 'Drone: Ready';
+  document.getElementById('drone-state-pill').className = 'status-pill pill-yellow';
+  document.getElementById('drone-info').style.display = 'flex';
+  document.getElementById('alt-bar-wrap').style.display = 'flex';
+  updateDroneInfo(state.flight_path[0]);
+}
+
+function nodePopup(n, data) {
+  const pu = n.pickups.map(p=>`<span class="tag tag-${p.kappa.toLowerCase()}">⬆ ${p.label} (${p.w}kg)</span>`).join('');
+  const dr = n.drops.map(p=>`<span class="tag tag-${p.kappa.toLowerCase()}">⬇ ${p.label} (${p.w}kg)</span>`).join('');
+  return `<div style="font-family:sans-serif;max-width:220px">
+    <b style="color:#1e293b">${n.depot?'🛖 ':'📍 '}${n.label}</b><br>
+    <span style="font-size:.75rem;color:#64748b">${n.category} • ${n.bh}m bldg</span><br>
+    ${pu?`<div style="margin-top:4px">${pu}</div>`:''}
+    ${dr?`<div style="margin-top:2px">${dr}</div>`:''}
+    <div style="margin-top:4px;font-size:.72rem;color:#64748b">GPS: ${n.lat.toFixed(4)}, ${n.lon.toFixed(4)}</div>
+  </div>`;
+}
+
+function catColor(cat) {
+  const m={hospital:'#f87171',mall:'#a78bfa',park:'#34d399',office:'#38bdf8',
+    transit:'#fbbf24',market:'#fb923c',residential:'#94a3b8',
+    govt:'#c084fc',airbase:'#e2e8f0',religious:'#fde68a',commercial:'#67e8f9'};
+  return m[cat]||'#94a3b8';
+}
+
+function drawRoute(data, algo) {
+  // Remove old route polylines
+  state.routePolylines.forEach(p=>map.removeLayer(p));
+  state.routePolylines = [];
+
+  const route = data.results[algo]?.route;
+  if (!route || !data.traj_gps) return;
+
+  const ALGO_COLORS = {
+    'HNP':'#38bdf8','MPDD':'#34d399','NN-PDP':'#fbbf24',
+    'HNP-NoVerify':'#f87171','HNP-NoCompat':'#fb923c','HNP-NoRefine':'#a78bfa'
+  };
+  const color = ALGO_COLORS[algo] || '#38bdf8';
+
+  for (let i=0; i<route.length-1; i++) {
+    const a = data.traj_gps[route[i]];
+    const b = data.traj_gps[route[i+1]];
+    if (!a||!b) continue;
+    const pl = L.polyline([[a[0],a[1]],[b[0],b[1]]], {
+      color, weight:3, opacity:.85,
+      dashArray: i===0||i===route.length-2 ? '8 4' : null
+    }).addTo(map);
+    state.routePolylines.push(pl);
+  }
+}
+
+function clearMap() {
+  state.routePolylines.forEach(p=>map.removeLayer(p));
+  state.nodeMarkers.forEach(m=>map.removeLayer(m));
+  state.gzoneCircles.forEach(c=>map.removeLayer(c));
+  state.routePolylines=[];
+  state.nodeMarkers=[];
+  state.gzoneCircles=[];
+  if (state.droneMarker) map.removeLayer(state.droneMarker);
+  state.droneMarker=null;
+}
+
+// ======================== ALGO CARDS ========================
+function renderAlgoCards(data) {
+  const ALGOS = ['HNP','MPDD','NN-PDP','HNP-NoVerify','HNP-NoCompat','HNP-NoRefine'];
+  const results = data.results;
+  // Find best
+  let bestCost=Infinity, bestAlgo='';
+  ALGOS.forEach(a=>{ if(results[a]?.metrics?.cost<bestCost){bestCost=results[a].metrics.cost;bestAlgo=a;} });
+
+  document.getElementById('algo-cards').innerHTML = ALGOS.map(a=>{
+    const r=results[a]; if(!r) return '';
+    const m=r.metrics;
+    const isBest=(a===bestAlgo);
+    const ALGO_DESC={
+      'HNP':'Semantic HNP + SMT verify + refine',
+      'MPDD':'Classical greedy distance-only',
+      'NN-PDP':'Nearest-neighbour baseline',
+      'HNP-NoVerify':'HNP without SMT verification',
+      'HNP-NoCompat':'HNP, compat disabled',
+      'HNP-NoRefine':'HNP, no TSP refinement'
+    };
+    const ALGO_COLORS={
+      'HNP':'#38bdf8','MPDD':'#34d399','NN-PDP':'#fbbf24',
+      'HNP-NoVerify':'#f87171','HNP-NoCompat':'#fb923c','HNP-NoRefine':'#a78bfa'
+    };
+    return `<div class="algo-card${isBest?' best':''}" onclick="selectAlgo('${a}')">
+      <div class="algo-name" style="color:${ALGO_COLORS[a]}">\ud83d\udcca ${a} ${isBest?'<span class="feasible-badge fb-yes">BEST</span>':''}</div>
+      <div style="font-size:.7rem;color:#64748b;margin-bottom:6px">${ALGO_DESC[a]||a}</div>
+      <div class="metrics-grid">
+        <div class="metric-chip">Dist <span>${m.dist?.toFixed(0)||'?'}m</span></div>
+        <div class="metric-chip">Cost <span>${m.cost?.toFixed(0)||'?'}</span></div>
+        <div class="metric-chip">Viol <span>${m.viol||0}</span></div>
+        <div class="metric-chip">Time <span>${m.time_s?.toFixed(0)||'?'}s</span></div>
+        <div class="metric-chip">Nrg <span>${m.energy?.toFixed(0)||'?'}</span></div>
+        <div class="metric-chip">Late <span>${m.lateness?.toFixed(1)||'0'}</span></div>
+      </div>
+      <div style="margin-top:6px;display:flex;gap:6px;align-items:center">
+        <span class="feasible-badge ${m.feasible?'fb-yes':'fb-no'}">${m.feasible?'\u2713 FEASIBLE':'\u2717 INFEASIBLE'}</span>
+        <span style="font-size:.7rem;color:#64748b">${m.delivered||0}/${m.n||0} delivered</span>
+        <span style="font-size:.7rem;color:#64748b">${m.runtime||0}s</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Trace
+  const log = results['HNP']?.log || [];
+  document.getElementById('algo-trace').innerHTML = log.slice(0,15).map(l=>`
+    <div class="trace-entry">
+      <span class="te-key">step</span> <span class="te-val">#${l.node}</span>
+      <span class="te-key"> sc</span><span class="te-val">${l.score}</span>
+      <span class="te-key"> cands</span><span class="te-val">${l.candidates}</span>
+      <span class="te-key"> η</span><span class="te-val">${l.payload}kg</span>
+      <span class="te-key"> seg</span><span class="te-val">${l.dist_seg}m</span>
+    </div>`).join('');
+}
+
+function selectAlgo(algo) {
+  if (!state.world) return;
+  state.currentAlgo = algo;
+  document.getElementById('anim-algo').value = algo;
+  drawRoute(state.world, algo);
+  // Update flight path
+  const route = state.world.results[algo]?.route || [];
+  state.flight_path = buildFlightPathFromRoute(route, state.world);
+  resetAnimation();
+}
+
+function buildFlightPathFromRoute(route, data) {
+  // Simple rebuild from route indices
+  return route.map((nd,i) => {
+    const gps = data.traj_gps[nd];
+    return {
+      step:i, node:nd,
+      lat: gps?gps[0]:data.origin.lat,
+      lon: gps?gps[1]:data.origin.lon,
+      alt: 30 + Math.random()*20,
+      label: `Node ${nd}`,
+      payload: 0, time: i*30,
+      algo_info: {action: i===0?'TAKEOFF':i===route.length-1?'LAND':'EN-ROUTE'}
+    };
+  });
+}
+
+function renderMetricsChart(data) {
+  const ALGOS = ['HNP','MPDD','NN-PDP','HNP-NoVerify','HNP-NoCompat','HNP-NoRefine'];
+  const colors = ['#38bdf8','#34d399','#fbbf24','#f87171','#fb923c','#a78bfa'];
+  const costs = ALGOS.map(a=>data.results[a]?.metrics?.cost?.toFixed(0)||0);
+
+  if (state.metricsChart) state.metricsChart.destroy();
+  const ctx = document.getElementById('metrics-chart').getContext('2d');
+  state.metricsChart = new Chart(ctx, {
+    type:'bar',
+    data:{
+      labels:ALGOS,
+      datasets:[{label:'Semantic Mission Cost',data:costs,
+        backgroundColor:colors.map(c=>c+'99'),borderColor:colors,borderWidth:2,borderRadius:4}]
+    },
+    options:{
+      responsive:true,
+      plugins:{
+        legend:{display:false},
+        title:{display:true,text:'Semantic Cost Comparison',color:'#94a3b8',font:{size:11}}
+      },
+      scales:{
+        x:{ticks:{color:'#64748b',font:{size:9}},grid:{color:'#1e293b'}},
+        y:{ticks:{color:'#64748b',font:{size:9}},grid:{color:'#1e293b'}}
+      }
+    }
+  });
+}
+
+// ======================== FLIGHT LOG ========================
+function renderFlightLog(fp) {
+  if (!fp || !fp.length) return;
+  document.getElementById('flight-log').innerHTML = fp.map(s=>`
+    <div class="log-entry log-${s.role}">
+      <div class="log-step">Step ${s.step} • ${s.role} • ${s.label}</div>
+      <div style="font-weight:700;font-size:.78rem">${s.algo_info?.action||''}</div>
+      <div style="color:#94a3b8;font-size:.72rem">
+        Alt: ${s.alt}m • Payload: ${s.payload}kg • T+${s.time}s
+      </div>
+      <div style="font-size:.7rem;color:#64748b">
+        GPS: ${s.lat?.toFixed(4)}, ${s.lon?.toFixed(4)}
+      </div>
+    </div>
+  `).join('');
+}
+
+// ======================== COMPAT GRAPH ========================
+function renderCompatGraph(data) {
+  const canvas = document.getElementById('compat-canvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth || 320; const H = 280;
+  canvas.width = W; canvas.height = H;
+  ctx.clearRect(0,0,W,H);
+
+  const CLASSES = ['PHARMA','FOOD','ELEC','FLAMM','OXID','CRYO','GEN'];
+  const FULL = ['PHARMA','FOOD','ELECTRONICS','FLAMMABLE','OXIDIZER','CRYOGENIC','GENERAL'];
+  const n = CLASSES.length;
+  const cx=W/2, cy=H/2, R=Math.min(W,H)*0.38;
+  const angles = CLASSES.map((_,i)=>-Math.PI/2 + (2*Math.PI*i/n));
+  const pts = angles.map(a=>({x:cx+R*Math.cos(a), y:cy+R*Math.sin(a)}));
+  const KCOLORS={
+    'PHARMA':'#93c5fd','FOOD':'#86efac','ELECTRONICS':'#c4b5fd',
+    'FLAMMABLE':'#fdba74','OXIDIZER':'#fbbf24','CRYOGENIC':'#bae6fd','GENERAL':'#94a3b8'
+  };
+  const edges = data.results?.HNP?.verif_log ? [] : [];
+  // Draw edges from incompat_pairs
+  const incompat = data.incompat_pairs || [];
+  // Draw all compatible (faint)
+  for(let i=0;i<n;i++) for(let j=i+1;j<n;j++) {
+    const a=FULL[i],b=FULL[j];
+    const bad = incompat.some(p=>(p[0]===a&&p[1]===b)||(p[0]===b&&p[1]===a));
+    ctx.beginPath();
+    ctx.moveTo(pts[i].x,pts[i].y);
+    ctx.lineTo(pts[j].x,pts[j].y);
+    ctx.strokeStyle = bad?'rgba(239,68,68,0.7)':'rgba(51,65,85,0.5)';
+    ctx.lineWidth = bad?2:1;
+    if(bad){ctx.setLineDash([4,4]);}else{ctx.setLineDash([]);}
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  // Draw nodes
+  pts.forEach((p,i)=>{
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,18,0,2*Math.PI);
+    ctx.fillStyle='#1e293b';
+    ctx.fill();
+    ctx.strokeStyle=KCOLORS[FULL[i]]||'#94a3b8';
+    ctx.lineWidth=2;
+    ctx.stroke();
+    ctx.fillStyle=KCOLORS[FULL[i]]||'#94a3b8';
+    ctx.font='bold 9px sans-serif';
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.fillText(CLASSES[i],p.x,p.y);
+  });
+
+  // Fixed incompat list
+  const FIXED = [
+    ['FLAMMABLE','OXIDIZER'],['CRYOGENIC','ELECTRONICS'],
+    ['FLAMMABLE','PHARMA'],['OXIDIZER','PHARMA'],['CRYOGENIC','FOOD'],
+    ['FLAMMABLE','FOOD'],['OXIDIZER','FOOD']
+  ];
+  document.getElementById('fixed-incompat').innerHTML = FIXED.map(p=>
+    `<div class="log-entry log-DEPOT" style="margin-bottom:3px">
+      <span class="tag tag-${p[0].toLowerCase()}">${p[0]}</span>
+      <span style="color:#f87171;font-weight:700">&perp;</span>
+      <span class="tag tag-${p[1].toLowerCase()}">${p[1]}</span>
+    </div>`
+  ).join('');
+}
+
+function renderVerifLog(log) {
+  if (!log.length) { document.getElementById('verif-log').innerHTML='<div style="color:#64748b;font-size:.75rem">Run mission to see SMT verification log.</div>'; return; }
+  document.getElementById('verif-log').innerHTML = log.map(l=>`
+    <div class="trace-entry">
+      <span class="te-key">req#${l.req}</span>
+      <span class="te-val">${l.synth_kappa}</span>
+      ${l.verified?'<span style="color:#34d399">✓ verified</span>':'<span style="color:#f87171">✗ wrong</span>'}
+      ${l.recovered?'<span style="color:#fbbf24">[recovered]</span>':''}
+      <span class="te-key"> true:</span><span class="te-val">${l.true_kappa}</span>
+    </div>`).join('');
+}
+
+function renderPkgDisplay(data) {
+  const pkgs = data.packages || [];
+  document.getElementById('pkg-display').innerHTML = pkgs.map(p=>`
+    <div class="node-pill">
+      <span class="cat-dot" style="background:${kappaBadgeColor(p.kappa)}"></span>
+      <div style="flex:1">
+        <div style="font-size:.78rem;font-weight:600">${p.desc}</div>
+        <div style="font-size:.7rem;color:#64748b">${p.weight}kg • dl:${p.deadline?.toFixed(0)}s • pr:${p.priority}</div>
+      </div>
+      <span class="tag tag-${p.kappa.toLowerCase()}">${p.kappa}</span>
+    </div>`).join('');
+}
+
+function kappaBadgeColor(k){
+  const m={PHARMA:'#93c5fd',FOOD:'#86efac',ELECTRONICS:'#c4b5fd',
+    FLAMMABLE:'#fdba74',OXIDIZER:'#fbbf24',CRYOGENIC:'#bae6fd',GENERAL:'#94a3b8'};
+  return m[k]||'#94a3b8';
+}
+
+// ======================== DRONE ANIMATION ========================
+const DRONE_ICON = L.divIcon({
+  html:`<div style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;
+    font-size:24px;filter:drop-shadow(0 0 8px #38bdf8);animation:droneHover .8s ease-in-out infinite alternate">
+    &#x1F6F8;</div>`,
+  className:'', iconAnchor:[18,18]
+});
+
+function playAnimation() {
+  if (!state.flight_path.length) return;
+  state.animPlaying = true;
+  document.getElementById('drone-state-pill').textContent = 'Drone: Flying';
+  document.getElementById('drone-state-pill').className = 'status-pill pill-green';
+  stepAnimation();
+}
+
+function pauseAnimation() {
+  state.animPlaying = false;
+  clearTimeout(state.animTimer);
+  document.getElementById('drone-state-pill').textContent = 'Drone: Paused';
+  document.getElementById('drone-state-pill').className = 'status-pill pill-yellow';
+}
+
+function resetAnimation() {
+  pauseAnimation();
+  state.animIdx = 0;
+  if (state.droneMarker) map.removeLayer(state.droneMarker);
+  state.droneMarker = null;
+  if (state.flight_path.length) updateDroneInfo(state.flight_path[0]);
+  document.getElementById('drone-state-pill').textContent = 'Drone: Ready';
+  document.getElementById('drone-state-pill').className = 'status-pill pill-yellow';
+}
+
+function stepAnimation() {
+  if (!state.animPlaying) return;
+  const fp = state.flight_path;
+  if (state.animIdx >= fp.length) {
+    pauseAnimation();
+    document.getElementById('drone-state-pill').textContent = 'Drone: Landed';
+    document.getElementById('drone-state-pill').className = 'status-pill pill-green';
+    return;
+  }
+  const step = fp[state.animIdx];
+  moveDroneTo(step);
+  updateDroneInfo(step);
+  // Highlight current route segment
+  if (state.animIdx > 0 && state.routePolylines[state.animIdx-1]) {
+    state.routePolylines[state.animIdx-1].setStyle({color:'#ffffff',weight:5,opacity:1});
+  }
+  state.animIdx++;
+  const speed = parseInt(document.getElementById('anim-speed').value);
+  const delay = Math.max(200, 2000 / speed);
+  state.animTimer = setTimeout(stepAnimation, delay);
+}
+
+function moveDroneTo(step) {
+  const latlng = [step.lat, step.lon];
+  if (!state.droneMarker) {
+    state.droneMarker = L.marker(latlng, {icon:DRONE_ICON, zIndexOffset:1000}).addTo(map);
+  } else {
+    state.droneMarker.setLatLng(latlng);
+  }
+  map.panTo(latlng, {animate:true, duration:0.5});
+}
+
+function updateDroneInfo(step) {
+  if (!step) return;
+  document.getElementById('di-node').textContent = step.label || step.node;
+  document.getElementById('di-alt').textContent = (step.alt||30).toFixed(0)+'m';
+  document.getElementById('di-payload').textContent = (step.payload||0).toFixed(1)+'kg';
+  document.getElementById('di-time').textContent = 'T+'+(step.time||0).toFixed(0)+'s';
+  document.getElementById('di-action').textContent = step.algo_info?.action||'';
+  // Altitude bar
+  const maxAlt = 120;
+  const pct = Math.min(100, ((step.alt||30)/maxAlt)*100);
+  document.getElementById('alt-bar').style.height = pct+'%';
+  document.getElementById('alt-label-val').textContent = (step.alt||30).toFixed(0)+'m';
+}
+
+// Speed slider
+document.getElementById('anim-speed').addEventListener('input', function(){
+  document.getElementById('speed-val').textContent = this.value + 'x';
+});
+
+// Algo selector changes route drawn
+document.getElementById('anim-algo').addEventListener('change', function(){
+  if (state.world) selectAlgo(this.value);
+});
+
+// ======================== NL INSTRUCTION ========================
+async function sendInitialNL() {
+  const inst = document.getElementById('initial-nl').value.trim();
+  if (!inst) return;
+  if (!state.session_id) { alert('Run a mission first'); return; }
+  document.getElementById('nl-parse-result').textContent = 'Processing with GLM4...';
+  try {
+    const r = await fetch(`${API}/api/llm/instruction`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({instruction:inst, session_id:state.session_id, phase:'initial'})
+    });
+    const d = await r.json();
+    const res = d.result;
+    const wps = res.waypoints||[];
+    document.getElementById('nl-parse-result').innerHTML =
+      `<div style="color:#34d399;font-weight:700">${res.mission_name||'Mission Parsed'}</div>`+
+      `<div style="color:#64748b">Waypoints: ${wps.length}</div>`+
+      (res.risk_flags?.length?`<div style="color:#fbbf24">⚠ ${res.risk_flags.join(', ')}</div>`:'')+
+      `<div style="color:#94a3b8;font-size:.7rem">${res.llm_reasoning?.slice(0,120)||''}</div>`;
+    addChatMsg('user', inst);
+    addChatMsg('llm', JSON.stringify(res,null,2));
+    switchTab('chat');
+  } catch(e) {
+    document.getElementById('nl-parse-result').textContent = 'Error: ' + e.message;
+  }
+}
+
+async function sendChatMsg() {
+  const inp = document.getElementById('chat-input');
+  const msg = inp.value.trim();
+  if (!msg) return;
+  if (!state.session_id) { alert('Run a mission first'); return; }
+  inp.value = '';
+  addChatMsg('user', msg);
+  addChatMsg('sys', 'GLM4 processing...');
+  try {
+    const r = await fetch(`${API}/api/llm/instruction`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({instruction:msg, session_id:state.session_id, phase:'midflight'})
+    });
+    const d = await r.json();
+    // Remove sys
+    const log = document.getElementById('chat-log');
+    const sys = log.querySelector('.chat-sys:last-child');
+    if (sys) sys.remove();
+    const res = d.result;
+    const actions = res.actions||[];
+    const actText = actions.map(a=>`‣ ${a.type}${a.location?' @ '+a.location:''}: ${a.reason||''}`).join('\n');
+    addChatMsg('llm',
+      `🤖 Actions detected:\n${actText}\n\nConstraints: ${(res.constraints_detected||[]).join(', ')||'none'}\nImpact: ${res.semantic_cost_impact}\nConfidence: ${(res.llm_confidence||0)*100}%`
+    );
+    if (actions.some(a=>a.type==='REROUTE'||a.type==='EMERGENCY_RETURN')) {
+      await triggerReplan();
+    }
+  } catch(e) {
+    addChatMsg('sys', 'Error: ' + e.message);
+  }
+}
+
+function addChatMsg(type, text) {
+  const log = document.getElementById('chat-log');
+  const div = document.createElement('div');
+  div.className = `chat-msg chat-${type}`;
+  div.style.whiteSpace = 'pre-wrap';
+  div.textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+// ======================== REPLAN ========================
+async function triggerReplan() {
+  if (!state.session_id) { alert('Run a mission first'); return; }
+  const type = document.getElementById('disrupt-type').value;
+  let disruption = {type};
+  if (state.clickedDisrupt && type==='nofly') {
+    // Convert latlng to local XY approx
+    const origin = state.world?.origin || {lat:12.9716, lon:77.5946};
+    const dx = (state.clickedDisrupt.lng - origin.lon) * Math.cos(origin.lat*Math.PI/180) * 111111;
+    const dy = (state.clickedDisrupt.lat - origin.lat) * 111111;
+    disruption = {type:'nofly', x:dx, y:dy, r:150};
+  }
+  try {
+    const r = await fetch(`${API}/api/replan`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({session_id:state.session_id, disruption})
+    });
+    const d = await r.json();
+    // Update flight path and redraw
+    if (d.flight_path) {
+      state.flight_path = d.flight_path;
+      renderFlightLog(d.flight_path);
+    }
+    if (d.new_gzones && state.world) {
+      state.world.gzones = d.new_gzones;
+      renderWorld({...state.world, results:{...state.world.results, HNP:{...state.world.results.HNP, route:d.new_route}}});
+    }
+    addChatMsg('sys', `⚠ Replanned! New cost: ${d.metrics?.cost?.toFixed(0)} | Violations: ${d.metrics?.viol}`);
+    switchTab('chat');
+  } catch(e) {
+    alert('Replan error: ' + e.message);
+  }
+}
+
+// ======================== TABS ========================
+function switchTab(name) {
+  document.querySelectorAll('.rpanel-tab').forEach((t,i)=>{
+    const tabs=['algos','flight','chat','compat'];
+    t.classList.toggle('active', tabs[i]===name);
+  });
+  document.querySelectorAll('.rpanel-content').forEach(c=>{
+    c.classList.toggle('active', c.id===`tab-${name}`);
+  });
+}
+
+// ======================== HELPERS ========================
+function setLoading(on, msg='') {
+  document.getElementById('loading').classList.toggle('hidden', !on);
+  if (msg) document.getElementById('load-algo-text').textContent = msg;
+}
+
+function list(gen) { return Array.from(gen); }
+function range(n) { return Array.from({length:n},(_,i)=>i); }
+
+// Drone hover CSS keyframe (injected)
+const style = document.createElement('style');
+style.textContent = `@keyframes droneHover{from{transform:translateY(0)}to{transform:translateY(-4px)}}`;
+document.head.appendChild(style);
+
+// ======================== STARTUP ========================
+init();
 </script>
 </body>
 </html>
