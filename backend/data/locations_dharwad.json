@@ -1,0 +1,227 @@
+[
+  {
+    "idx": 0,
+    "name": "SDM Hospital & Medical College",
+    "lat": 15.4606,
+    "lon": 75.0168,
+    "bh": 22.0,
+    "cat": "hospital",
+    "desc": "S.D.M. Hospital, Sattur Colony, Dharwad"
+  },
+  {
+    "idx": 1,
+    "name": "KIMS Hospital Dharwad",
+    "lat": 15.4509,
+    "lon": 75.012,
+    "bh": 28.0,
+    "cat": "hospital",
+    "desc": "Karnataka Institute of Medical Sciences, Vidyanagar"
+  },
+  {
+    "idx": 2,
+    "name": "Suretech Hospital",
+    "lat": 15.4578,
+    "lon": 75.0215,
+    "bh": 15.0,
+    "cat": "hospital",
+    "desc": "Suretech Multi-Specialty Hospital, P.B. Road"
+  },
+  {
+    "idx": 3,
+    "name": "Navodaya Medical College",
+    "lat": 15.472,
+    "lon": 75.005,
+    "bh": 18.0,
+    "cat": "hospital",
+    "desc": "Navodaya Medical College, Raichur Road, Dharwad"
+  },
+  {
+    "idx": 4,
+    "name": "Govt District Hospital Dharwad",
+    "lat": 15.4597,
+    "lon": 74.9989,
+    "bh": 20.0,
+    "cat": "hospital",
+    "desc": "District Civil Hospital, Dharwad"
+  },
+  {
+    "idx": 5,
+    "name": "Urban Oasis Mall",
+    "lat": 15.3649,
+    "lon": 75.1244,
+    "bh": 42.0,
+    "cat": "mall",
+    "desc": "Urban Oasis Mall, Hubli"
+  },
+  {
+    "idx": 6,
+    "name": "Akshay Park Mall",
+    "lat": 15.3593,
+    "lon": 75.134,
+    "bh": 38.0,
+    "cat": "mall",
+    "desc": "Akshay Park Mall, Vidya Nagar, Hubli"
+  },
+  {
+    "idx": 7,
+    "name": "Big Bazaar Dharwad",
+    "lat": 15.4563,
+    "lon": 75.0101,
+    "bh": 14.0,
+    "cat": "mall",
+    "desc": "Big Bazaar, P.B. Road, Dharwad"
+  },
+  {
+    "idx": 8,
+    "name": "Karnataka University",
+    "lat": 15.457,
+    "lon": 75.009,
+    "bh": 12.0,
+    "cat": "education",
+    "desc": "Karnataka University, Pavate Nagar, Dharwad"
+  },
+  {
+    "idx": 9,
+    "name": "BVB College of Engg",
+    "lat": 15.3712,
+    "lon": 75.1239,
+    "bh": 16.0,
+    "cat": "education",
+    "desc": "BVB College of Engineering & Technology, Vidyanagar, Hubli"
+  },
+  {
+    "idx": 10,
+    "name": "IIT Dharwad",
+    "lat": 15.392,
+    "lon": 74.9734,
+    "bh": 10.0,
+    "cat": "education",
+    "desc": "Indian Institute of Technology Dharwad, WALMI Campus"
+  },
+  {
+    "idx": 11,
+    "name": "Dharwad Railway Station",
+    "lat": 15.4603,
+    "lon": 74.9981,
+    "bh": 9.0,
+    "cat": "transit",
+    "desc": "Dharwad Junction, NH-48"
+  },
+  {
+    "idx": 12,
+    "name": "Hubli Airport",
+    "lat": 15.3617,
+    "lon": 75.085,
+    "bh": 8.0,
+    "cat": "airbase",
+    "desc": "Hubballi Airport (HBX), Gokul Road"
+  },
+  {
+    "idx": 13,
+    "name": "Hubli Railway Station",
+    "lat": 15.35,
+    "lon": 75.135,
+    "bh": 10.0,
+    "cat": "transit",
+    "desc": "Hubli Junction \u2014 major rail hub"
+  },
+  {
+    "idx": 14,
+    "name": "KSRTC Bus Stand Dharwad",
+    "lat": 15.459,
+    "lon": 74.9967,
+    "bh": 7.0,
+    "cat": "transit",
+    "desc": "KSRTC Central Bus Stand, Dharwad"
+  },
+  {
+    "idx": 15,
+    "name": "Dharwad Town Hall Ground",
+    "lat": 15.46,
+    "lon": 75.0077,
+    "bh": 4.0,
+    "cat": "park",
+    "desc": "Town Hall Grounds, Dharwad"
+  },
+  {
+    "idx": 16,
+    "name": "Indira Gandhi Glass House Garden",
+    "lat": 15.456,
+    "lon": 75.0097,
+    "bh": 3.0,
+    "cat": "park",
+    "desc": "Glass House Garden, Near Unkal Lake"
+  },
+  {
+    "idx": 17,
+    "name": "Unkal Lake",
+    "lat": 15.376,
+    "lon": 75.096,
+    "bh": 2.0,
+    "cat": "park",
+    "desc": "Unkal Lake, Hubli"
+  },
+  {
+    "idx": 18,
+    "name": "Dharwad Industrial Area",
+    "lat": 15.483,
+    "lon": 74.996,
+    "bh": 18.0,
+    "cat": "industrial",
+    "desc": "KIADB Industrial Area, Dharwad"
+  },
+  {
+    "idx": 19,
+    "name": "Almatti Road Warehouse",
+    "lat": 15.442,
+    "lon": 75.031,
+    "bh": 10.0,
+    "cat": "warehouse",
+    "desc": "Logistics Warehouse, Almatti Road, Dharwad"
+  },
+  {
+    "idx": 20,
+    "name": "Gokul Road Commercial Hub",
+    "lat": 15.369,
+    "lon": 75.08,
+    "bh": 20.0,
+    "cat": "commercial",
+    "desc": "Gokul Road, Hubli \u2014 main commercial corridor"
+  },
+  {
+    "idx": 21,
+    "name": "Dharwad DC Office",
+    "lat": 15.4591,
+    "lon": 75.0022,
+    "bh": 14.0,
+    "cat": "govt",
+    "desc": "Deputy Commissioner Office, Dharwad"
+  },
+  {
+    "idx": 22,
+    "name": "Hubli Municipal Corporation",
+    "lat": 15.362,
+    "lon": 75.125,
+    "bh": 16.0,
+    "cat": "govt",
+    "desc": "Hubli-Dharwad Municipal Corporation"
+  },
+  {
+    "idx": 23,
+    "name": "Siddharoodha Math",
+    "lat": 15.4575,
+    "lon": 75.0116,
+    "bh": 8.0,
+    "cat": "religious",
+    "desc": "Siddharoodha Math, Hubli Road, Dharwad"
+  },
+  {
+    "idx": 24,
+    "name": "Nrupatunga Betta",
+    "lat": 15.452,
+    "lon": 75.0168,
+    "bh": 5.0,
+    "cat": "park",
+    "desc": "Nrupatunga Betta Hillock, Dharwad"
+  }
+]
