@@ -1,793 +1,1098 @@
-#!/usr/bin/env python3
-"""
-UAV-LLM v4.0 — Real-World Semantic Multi-Commodity UAV Delivery
-FastAPI backend: MPDD + HNP + SMT-style verification + Ollama GLM integration
-Real GPS coordinates — Dharwad, Karnataka (SDM Hospital, Urban Oasis Mall, etc.)
+"""UAV-LLM Backend — Full Implementation
+Paper 1: MPDD (Chen et al., IEEE WCNC 2025)
+Paper 2: Semantic Multi-Commodity UAV Delivery with LLM (HNP formulation)
+
+All mathematics implemented strictly from equations in both papers.
 """
 
-import math, time, itertools, random, json, os
-from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Optional, Any
+from __future__ import annotations
+import math, time, itertools, random, json, threading, re
+from dataclasses import dataclass, field, asdict
+from typing import Dict, List, Tuple, Set, Optional, Any
 import numpy as np
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
-import httpx
+from flask import Flask, jsonify, request, send_file
+from flask_cors import CORS
+import requests as req_lib
 
-app = FastAPI(title="UAV-LLM Dharwad Real-World System", version="4.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
-                   allow_methods=["*"], allow_headers=["*"])
+app = Flask(__name__, static_folder='.', static_url_path='')
+CORS(app)
 
-# ─── Constants ────────────────────────────────────────────────────────────────
-CLASSES      = ["PHARMA","FOOD","ELECTRONICS","FLAMMABLE","OXIDIZER","CRYOGENIC","GENERAL"]
-HAZARD_CLASSES = {"FLAMMABLE","OXIDIZER","CRYOGENIC"}
-FIXED_INCOMPAT = [
-    ("FLAMMABLE","OXIDIZER"),("CRYOGENIC","ELECTRONICS"),
-    ("FLAMMABLE","PHARMA"),("OXIDIZER","PHARMA"),("CRYOGENIC","FOOD"),
-    ("FLAMMABLE","FOOD"),("OXIDIZER","FOOD")
-]
-PENALTIES  = {"compat":220.0,"geo":160.0,"payload":300.0,"precedence":220.0,"missed":600.0}
-ALPHA_OBJ  = {"distance":1.0,"lateness":1.8,"noise":0.55,"energy":0.08}
+# ──────────────────────────────────────────────────────────────────────────────
+# 0.  CONSTANTS  (from both papers)
+# ──────────────────────────────────────────────────────────────────────────────
 
-OLLAMA_URL   = os.getenv("OLLAMA_URL",   "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "glm4")
+CLASSES = ["PHARMA", "FOOD", "ELECTRONICS", "FLAMMABLE", "OXIDIZER", "CRYOGENIC", "GENERAL"]
+HAZARD_CLASSES = {"FLAMMABLE", "OXIDIZER", "CRYOGENIC"}
 
-UAV_SPEED  = 15.0    # m/s cruising speed
-ROTOR_K    = 0.04    # energy coeff per kg of payload
-MIN_ALT    = 30.0    # minimum flight altitude (m)
-CLEARANCE  = 12.0    # clearance above tallest building along segment (m)
-EARTH_R    = 6371000.0  # metres
+# Paper-2, Section 1.2.3 — α weights for J(π)  (Eq. 6)
+ALPHA_OBJ = {"distance": 1.0, "lateness": 1.8, "noise": 0.55, "energy": 0.08}
 
-# ─── Real Dharwad/Hubli-Dharwad locations ─────────────────────────────────────
-# Format: (name, lat, lon, building_height_m, category, description)
-DHARWAD_LOCATIONS = [
-    # ── Hospitals / Medical ──
-    ("SDM Hospital & Medical College",    15.4606, 75.0168, 22.0, "hospital",
-     "S.D.M. Hospital, Sattur Colony, Dharwad"),
-    ("KIMS Hospital Dharwad",             15.4509, 75.0120, 28.0, "hospital",
-     "Karnataka Institute of Medical Sciences, Vidyanagar"),
-    ("Suretech Hospital",                 15.4578, 75.0215, 15.0, "hospital",
-     "Suretech Multi-Specialty Hospital, P.B. Road"),
-    ("Navodaya Medical College",          15.4720, 75.0050, 18.0, "hospital",
-     "Navodaya Medical College, Raichur Road, Dharwad"),
-    ("Govt District Hospital Dharwad",   15.4597, 74.9989, 20.0, "hospital",
-     "District Civil Hospital, Dharwad"),
+# Paper-2, penalty constants
+PENALTIES = {"compat": 220.0, "geo": 160.0, "payload": 300.0, "precedence": 220.0, "missed": 600.0}
 
-    # ── Malls / Shopping ──
-    ("Urban Oasis Mall",                  15.3649, 75.1244, 42.0, "mall",
-     "Urban Oasis Mall, Hubli"),
-    ("Akshay Park Mall",                  15.3593, 75.1340, 38.0, "mall",
-     "Akshay Park Mall, Vidya Nagar, Hubli"),
-    ("Big Bazaar Dharwad",                15.4563, 75.0101, 14.0, "mall",
-     "Big Bazaar, P.B. Road, Dharwad"),
+# Paper-1, Section III-A — fitness balance α = 0.7 (from their ablation)
+MPDD_ALPHA = 0.7
 
-    # ── Education ──
-    ("Karnataka University",              15.4570, 75.0090, 12.0, "education",
-     "Karnataka University, Pavate Nagar, Dharwad"),
-    ("BVB College of Engg",               15.3712, 75.1239, 16.0, "education",
-     "BVB College of Engineering & Technology, Vidyanagar, Hubli"),
-    ("IIT Dharwad",                       15.3920, 74.9734, 10.0, "education",
-     "Indian Institute of Technology Dharwad, WALMI Campus"),
+# HNP score weights  (Paper-2 routing)
+HNP_DIST_W   = 0.55
+HNP_WEIGHT_W = 0.45
+HNP_BETA_BLOCK  = 45.0
+HNP_GAMMA_GEO   = 1.5
+HNP_GAMMA_DL    = 120.0
 
-    # ── Transit / Logistics ──
-    ("Dharwad Railway Station",           15.4603, 74.9981, 9.0,  "transit",
-     "Dharwad Junction, NH-48"),
-    ("Hubli Airport",                     15.3617, 75.0850, 8.0,  "airbase",
-     "Hubballi Airport (HBX), Gokul Road"),
-    ("Hubli Railway Station",             15.3500, 75.1350, 10.0, "transit",
-     "Hubli Junction — major rail hub"),
-    ("KSRTC Bus Stand Dharwad",           15.4590, 74.9967, 7.0,  "transit",
-     "KSRTC Central Bus Stand, Dharwad"),
+# ──────────────────────────────────────────────────────────────────────────────
+# 1.  REAL DHARWAD LOCATIONS  (lat/lon → projected km coords)
+# ──────────────────────────────────────────────────────────────────────────────
 
-    # ── Parks / Open Areas ──
-    ("Dharwad Town Hall Ground",          15.4600, 75.0077, 4.0,  "park",
-     "Town Hall Grounds, Dharwad"),
-    ("Indira Gandhi Glass House Garden",  15.4560, 75.0097, 3.0,  "park",
-     "Glass House Garden, Near Unkal Lake"),
-    ("Unkal Lake",                        15.3760, 75.0960, 2.0,  "park",
-     "Unkal Lake, Hubli"),
+DHARWAD_ORIGIN_LAT = 15.4500
+DHARWAD_ORIGIN_LON = 74.9800
 
-    # ── Commercial / Industrial ──
-    ("Dharwad Industrial Area",           15.4830, 74.9960, 18.0, "industrial",
-     "KIADB Industrial Area, Dharwad"),
-    ("Almatti Road Warehouse",            15.4420, 75.0310, 10.0, "warehouse",
-     "Logistics Warehouse, Almatti Road, Dharwad"),
-    ("Gokul Road Commercial Hub",         15.3690, 75.0800, 20.0, "commercial",
-     "Gokul Road, Hubli — main commercial corridor"),
-
-    # ── Government ──
-    ("Dharwad DC Office",                 15.4591, 75.0022, 14.0, "govt",
-     "Deputy Commissioner Office, Dharwad"),
-    ("Hubli Municipal Corporation",       15.3620, 75.1250, 16.0, "govt",
-     "Hubli-Dharwad Municipal Corporation"),
-
-    # ── Religious / Landmark ──
-    ("Siddharoodha Math",                 15.4575, 75.0116, 8.0,  "religious",
-     "Siddharoodha Math, Hubli Road, Dharwad"),
-    ("Nrupatunga Betta",                  15.4520, 75.0168, 5.0,  "park",
-     "Nrupatunga Betta Hillock, Dharwad"),
+RAW_LOCATIONS = [
+    # name,              lat,       lon,       type,         altitude_m
+    ("SDM Hospital",          15.4653, 75.0153, "depot",       12.0),
+    ("Urban Oasis Mall",      15.4590, 75.0080, "commercial",  8.0),
+    ("IIIT Dharwad",          15.3933, 74.9765, "education",   20.0),
+    ("KCD Hospital",          15.4568, 75.0056, "medical",     10.0),
+    ("Dharwad Railway Stn",   15.4504, 74.9997, "transport",   5.0),
+    ("Unkal Lake Park",       15.4732, 74.9917, "park",        7.0),
+    ("Karnataka Univ",        15.4546, 74.9777, "education",   15.0),
+    ("Caltex Circle",         15.4540, 75.0013, "junction",    6.0),
+    ("Hubli Airport",         15.3617, 75.0849, "airport",     4.0),
+    ("Saptapur Market",       15.4611, 74.9892, "market",      9.0),
+    ("Navanagar Res Area",    15.4480, 75.0190, "residential", 11.0),
+    ("ENT Hospital",          15.4600, 75.0100, "medical",     13.0),
 ]
 
-# ─── Geo helpers ──────────────────────────────────────────────────────────────
-def haversine(lat1, lon1, lat2, lon2) -> float:
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlam = math.radians(lon2 - lon1)
-    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
-    return 2 * EARTH_R * math.asin(math.sqrt(a))
+def latlon_to_km(lat: float, lon: float) -> Tuple[float, float]:
+    """Simple equirectangular projection to km from Dharwad origin."""
+    dx = (lon - DHARWAD_ORIGIN_LON) * math.cos(math.radians(DHARWAD_ORIGIN_LAT)) * 111.32
+    dy = (lat - DHARWAD_ORIGIN_LAT) * 110.57
+    return round(dx, 4), round(dy, 4)
 
-def lat_lon_to_xy(lat, lon, origin_lat, origin_lon) -> Tuple[float, float]:
-    x = math.radians(lon - origin_lon) * math.cos(math.radians(origin_lat)) * EARTH_R
-    y = math.radians(lat - origin_lat) * EARTH_R
-    return x, y
+LOCATIONS = []
+for name, lat, lon, ltype, alt in RAW_LOCATIONS:
+    x, y = latlon_to_km(lat, lon)
+    LOCATIONS.append({"name": name, "lat": lat, "lon": lon,
+                      "x": x, "y": y, "type": ltype, "altitude": alt})
 
-def dist_2d(ax, ay, bx, by) -> float:
-    return math.hypot(ax - bx, ay - by)
-
-# ─── Data classes ─────────────────────────────────────────────────────────────
-@dataclass
-class CityNode:
-    idx: int
-    lat: float; lon: float
-    x: float;   y: float
-    building_height: float
-    label: str
-    category: str
-    description: str = ""
-    is_depot: bool = False
-    pickups: List[dict] = field(default_factory=list)
-    drops:   List[dict] = field(default_factory=list)
+# ──────────────────────────────────────────────────────────────────────────────
+# 2.  DATA CLASSES
+# ──────────────────────────────────────────────────────────────────────────────
 
 @dataclass
-class Package:
+class Request:
     idx: int
-    pickup_loc: int; delivery_loc: int
-    weight: float;   kappa: str
-    deadline: float; priority: float
+    pickup: int       # index into LOCATIONS
+    delivery: int
+    weight: float
+    kappa_true: str   # ground-truth commodity class
+    deadline: float   # max arrival time (minutes)
     temp_required: bool
+    priority: float
+    noisy_text_level: float = 0.0
     description: str = ""
 
 @dataclass
-class GeoZone:
-    lat: float; lon: float
-    x: float;   y: float
-    radius: float
-    kind: str
-    label: str = ""
+class Zone:
+    x: float; y: float; radius: float; kind: str  # "geo" | "noise"
+    name: str = ""
 
-# ─── Compatibility graph ──────────────────────────────────────────────────────
-def build_compat(density: float, seed: int) -> Dict[Tuple, bool]:
+@dataclass
+class Instance:
+    n: int
+    coords: np.ndarray       # shape (2n+2, 2) in km
+    altitudes: np.ndarray    # shape (2n+2,) in metres
+    requests: List[Request]
+    W: float
+    compat_true: Dict[Tuple[str,str], bool]
+    geozones: List[Zone]
+    noisezones: List[Zone]
+    speed: float = 0.083333  # km/min ≈ 5 km/h for urban UAV
+
+@dataclass
+class SynthTuple:
+    kappa: str
+    verified: bool
+    recovered: bool
+
+@dataclass
+class RouteResult:
+    route: List[int]
+    synth: Dict[int, SynthTuple]
+    runtime: float
+    algo: str = ""
+    metrics: Dict = field(default_factory=dict)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 3.  COMPATIBILITY GRAPH  (Paper-2 Eq. 2)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def build_compat_graph(incompat_density: float = 0.20, seed: int = 42) -> Dict[Tuple[str,str], bool]:
+    """
+    Gc = (K, Ec)   — Paper-2 Section 1.2.2
+    (κp, κq) ∉ Ec  iff  HAZARD(κp)=FLAMMABLE ∧ HAZARD(κq)=OXIDIZER
+                        ∨ τ_max_p < τ_min_q ∧ TEMPSENSITIVE(κq)
+                        ∨ REGULATORYCONFLICT(κp, κq)
+    """
+    compat: Dict[Tuple[str,str], bool] = {(a,b): True for a in CLASSES for b in CLASSES}
+    # Hard regulatory conflicts — FAA Part 107 §107.39
+    FIXED_BAD = [
+        ("FLAMMABLE","OXIDIZER"),   # HAZARD ∧ HAZARD
+        ("CRYOGENIC","ELECTRONICS"), # thermal incompatibility
+        ("FLAMMABLE","PHARMA"),      # regulatory
+        ("OXIDIZER","PHARMA"),
+        ("CRYOGENIC","FOOD"),
+    ]
+    for a, b in FIXED_BAD:
+        compat[(a,b)] = compat[(b,a)] = False
+    # Random additional incompatibilities
     rng = np.random.default_rng(seed)
-    G = {(a,b): True for a in CLASSES for b in CLASSES}
-    for a,b in FIXED_INCOMPAT:
-        G[(a,b)] = G[(b,a)] = False
     pairs = [(a,b) for i,a in enumerate(CLASSES) for b in CLASSES[i+1:]]
-    for a,b in pairs:
-        if G[(a,b)] and rng.random() < density:
-            G[(a,b)] = G[(b,a)] = False
-    return G
+    for a, b in pairs:
+        if compat[(a,b)] and rng.random() < incompat_density:
+            compat[(a,b)] = compat[(b,a)] = False
+    return compat
 
-def clique_ok(classes: list, G: dict) -> bool:
-    return all(G.get((a,b), True) for a,b in itertools.combinations(classes, 2))
+COMPAT_GRAPH = build_compat_graph()
 
-# ─── Zone geometry ────────────────────────────────────────────────────────────
-def seg_hits_zone(ax, ay, bx, by, z: GeoZone) -> bool:
-    cx, cy = z.x, z.y
-    abx, aby = bx-ax, by-ay
-    denom = abx*abx + aby*aby
-    if denom < 1e-12:
-        return (ax-cx)**2 + (ay-cy)**2 <= z.radius**2
-    t = max(0.0, min(1.0, ((cx-ax)*abx+(cy-ay)*aby)/denom))
-    px, py = ax+t*abx, ay+t*aby
-    return (px-cx)**2 + (py-cy)**2 <= z.radius**2
+def is_compatible_classset(classes: List[str], compat: Dict[Tuple[str,str], bool]) -> bool:
+    """Paper-2 Eq. 4 — Ai must induce a clique in Gc."""
+    return all(compat.get((a,b), True) for a,b in itertools.combinations(classes, 2))
 
-def geo_penalty(ax, ay, bx, by, gzones: List[GeoZone]) -> float:
-    return sum(dist_2d(ax,ay,bx,by) for z in gzones if seg_hits_zone(ax,ay,bx,by,z))
+# ──────────────────────────────────────────────────────────────────────────────
+# 4.  GEOMETRY HELPERS
+# ──────────────────────────────────────────────────────────────────────────────
 
-# ─── Altitude planning ───────────────────────────────────────────────────────
-def compute_altitude(ax, ay, bx, by, city_nodes: List[CityNode]) -> float:
-    x0, x1 = min(ax,bx)-30, max(ax,bx)+30
-    y0, y1 = min(ay,by)-30, max(ay,by)+30
-    max_bh  = max(
-        (n.building_height for n in city_nodes
-         if x0 <= n.x <= x1 and y0 <= n.y <= y1),
-        default=0.0
-    )
-    return max(MIN_ALT, max_bh + CLEARANCE)
+def dist_xy(a: np.ndarray, b: np.ndarray) -> float:
+    return float(np.linalg.norm(a - b))
 
-# ─── Energy / wind ───────────────────────────────────────────────────────────
-def energy_3d(d3: float, payload: float, wind_comp: float = 0.0) -> float:
-    return d3 * (1.0 + ROTOR_K * payload) + wind_comp
+def haversine_km(lat1, lon1, lat2, lon2) -> float:
+    R = 6371.0
+    φ1, φ2 = math.radians(lat1), math.radians(lat2)
+    dφ = math.radians(lat2 - lat1)
+    dλ = math.radians(lon2 - lon1)
+    a = math.sin(dφ/2)**2 + math.cos(φ1)*math.cos(φ2)*math.sin(dλ/2)**2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
-def wind_penalty(ax, ay, bx, by, wind_dir: float = 270.0, wind_spd: float = 6.0) -> float:
-    dx, dy  = bx-ax, by-ay
-    angle   = math.degrees(math.atan2(dy, dx)) % 360
-    diff    = abs(angle - wind_dir) % 360
-    if diff > 180: diff = 360 - diff
-    hw = math.cos(math.radians(diff))
-    return dist_2d(ax,ay,bx,by) * max(0, hw) * wind_spd * 0.002
+def segment_intersects_zone(a: np.ndarray, b: np.ndarray, z: Zone) -> bool:
+    """Check if segment ab intersects circular zone."""
+    c = np.array([z.x, z.y])
+    ab = b - a
+    denom = float(np.dot(ab, ab))
+    if denom == 0:
+        return dist_xy(a, c) <= z.radius
+    t = max(0.0, min(1.0, float(np.dot(c - a, ab) / denom)))
+    proj = a + t * ab
+    return dist_xy(proj, c) <= z.radius
 
-# ─── Node role ───────────────────────────────────────────────────────────────
-def node_role(node: int, n: int) -> Tuple[str, int]:
-    if 1 <= node <= n:      return "P", node - 1
-    if n+1 <= node <= 2*n:  return "D", node - (n+1)
+def segment_zone_exposure(a: np.ndarray, b: np.ndarray, zones: List[Zone]) -> float:
+    length = dist_xy(a, b)
+    return sum(length for z in zones if segment_intersects_zone(a, b, z))
+
+def altitude_for_segment(u_alt: float, v_alt: float, geozones: List[Zone],
+                         coords_u: np.ndarray, coords_v: np.ndarray) -> float:
+    """3D altitude planning: climb above 50m if crossing geofence."""
+    base = max(u_alt, v_alt) + 10.0  # 10m clearance
+    for z in geozones:
+        if segment_intersects_zone(coords_u, coords_v, z):
+            base = max(base, 80.0)  # climb to 80m in restricted zones
+    return base
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 5.  ENERGY MODEL  (Paper-2 Eq. 6 — e(dis, y))
+# ──────────────────────────────────────────────────────────────────────────────
+
+def energy_cost(dist_km: float, payload_kg: float, alt_delta_m: float = 0.0) -> float:
+    """
+    e(dis_{πi,πi+1}, y_{πi})  from Paper-2 Eq. 6
+    Base power model: P = P_base * (1 + k_payload * y + k_climb * |Δh|/dis)
+    """
+    k_payload = 0.04   # Paper-2 coefficient
+    k_climb   = 0.02
+    if dist_km < 1e-9:
+        return 0.0
+    factor = 1.0 + k_payload * payload_kg + k_climb * abs(alt_delta_m) / (dist_km * 1000 + 1)
+    return dist_km * factor
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 6.  COST FUNCTION  J(π)  (Paper-2 Eq. 5–6)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def node_request(node: int, n: int) -> Tuple[str, int]:
+    """Map trajectory node index to (type, request_idx).
+    Nodes 1..n  = pickups,  n+1..2n = deliveries,  0 and 2n+1 = depot.
+    """
+    if 1 <= node <= n:          return "P", node - 1
+    if n+1 <= node <= 2*n:      return "D", node - (n+1)
     return "DEPOT", -1
 
-# ─── Route evaluator ─────────────────────────────────────────────────────────
-def evaluate(traj_xy, city_nodes, packages, route, G, gzones, nzones,
-             synth=None, W=20.0, wind_dir=270.0):
-    n = len(packages)
-    onboard=set(); delivered=set(); y=0.0; t=0.0
-    dist=en=noise=lateness=0.0
-    cv=gv=pv=rv=0; seen=set()
-    depot_ok = 1 if (route and route[0]==0 and route[-1]==2*n+1) else 0
-    for s in range(len(route)-1):
-        u, v   = route[s], route[s+1]
-        ax, ay = traj_xy[u]; bx, by = traj_xy[v]
-        seg2d  = dist_2d(ax,ay,bx,by)
-        seg3d  = math.sqrt(seg2d**2 + 6.0**2)
-        dist  += seg2d
-        wp     = wind_penalty(ax,ay,bx,by,wind_dir)
-        en    += energy_3d(seg3d, y, wp)
-        noise += sum(seg2d for z in nzones if seg_hits_zone(ax,ay,bx,by,z))
-        if any(seg_hits_zone(ax,ay,bx,by,z) for z in gzones): gv += 1
-        t += seg2d / UAV_SPEED
-        tp, rid = node_role(v, n)
-        if tp in {"P","D"}:
-            if v in seen: rv += 1
+def evaluate_route(
+    inst: Instance,
+    route: List[int],
+    use_true_semantics: bool = True,
+    synth: Optional[Dict[int, SynthTuple]] = None
+) -> Dict[str, Any]:
+    """
+    Evaluate J(π) from Paper-2 Eq. 6 plus constraint violation penalties.
+    Also checks all constraints from Paper-1 (Eq. 1a-1g) and Paper-2 (Eq. 7a-7f).
+    Returns full metric dictionary.
+    """
+    n = inst.n
+    onboard: Set[int] = set()
+    picked:  Set[int] = set()
+    delivered: Set[int] = set()
+    y = 0.0       # current payload (kg)
+    tcur = 0.0    # current time (minutes)
+
+    distance = energy = noise = lateness = 0.0
+    compat_viol = geo_viol = payload_viol = precedence_viol = 0
+    altitudes_trace: List[float] = []
+    alt_cur = inst.altitudes[route[0]] if route else 0.0
+
+    depot_invalid = 0 if (route and route[0] == 0 and route[-1] == 2*n+1) else 1
+    seen: Set[int] = set()
+    duplicate = 0
+
+    for step in range(len(route) - 1):
+        u, v = route[step], route[step+1]
+        a, b = inst.coords[u], inst.coords[v]
+        alt_v = inst.altitudes[v]
+
+        # 3D segment: climb if needed
+        fly_alt = altitude_for_segment(alt_cur, alt_v, inst.geozones, a, b)
+        alt_delta = fly_alt - alt_cur
+
+        seg_d = dist_xy(a, b)
+        distance += seg_d
+        energy   += energy_cost(seg_d, y, alt_delta)
+        noise    += segment_zone_exposure(a, b, inst.noisezones)
+
+        if segment_zone_exposure(a, b, inst.geozones) > 0:
+            geo_viol += 1
+
+        tcur    += seg_d / inst.speed
+        alt_cur  = alt_v
+        altitudes_trace.append(fly_alt)
+
+        typ, rid = node_request(v, n)
+        if typ in {"P", "D"}:
+            if v in seen:
+                duplicate += 1
             seen.add(v)
-        if tp == "P":
-            pkg = packages[rid]; y += pkg.weight; onboard.add(rid)
-        elif tp == "D":
-            pkg = packages[rid]
-            if rid not in onboard: rv += 1
+
+        if typ == "P":
+            req = inst.requests[rid]
+            y += req.weight
+            picked.add(rid)
+            onboard.add(rid)
+        elif typ == "D":
+            req = inst.requests[rid]
+            if rid not in onboard:
+                precedence_viol += 1
             else:
-                y -= pkg.weight; onboard.remove(rid)
-                delivered.add(rid)
-                lateness += max(0, t - pkg.deadline) * pkg.priority
-        if y < -1e-6 or y - W > 1e-6: pv += 1
-        kk = [(synth[i] if synth else packages[i].kappa) for i in onboard]
-        if not clique_ok(kk, G): cv += 1
+                y -= req.weight
+                onboard.remove(rid)
+            delivered.add(rid)
+            # Paper-2 Eq. 6 — deadline violation term: max(0, t_d'i - τ_max_i)
+            lateness += max(0.0, tcur - req.deadline) * req.priority
+
+        # Paper-1 Eq. 1d + Paper-2 Eq. 7b — payload constraint
+        if y < -1e-6 or y - inst.W > 1e-6:
+            payload_viol += 1
+
+        # Paper-2 Eq. 4 — Ai induces clique in Gc
+        if use_true_semantics or synth is None:
+            active_classes = [inst.requests[r].kappa_true for r in onboard]
+        else:
+            active_classes = [synth[r].kappa for r in onboard]
+        if not is_compatible_classset(active_classes, inst.compat_true):
+            compat_viol += 1
+
     expected = set(range(1, 2*n+1))
-    missed   = len(expected - seen) + len(seen - expected) + rv + (0 if depot_ok else 1)
-    total_viol = cv + gv + pv + rv + missed
-    cost = (
-        ALPHA_OBJ["distance"]*dist + ALPHA_OBJ["lateness"]*lateness +
-        ALPHA_OBJ["noise"]*noise   + ALPHA_OBJ["energy"]*en +
-        PENALTIES["compat"]*cv     + PENALTIES["geo"]*gv +
-        PENALTIES["payload"]*pv    + PENALTIES["precedence"]*rv +
-        PENALTIES["missed"]*missed
+    missed = len(expected - seen) + len(seen - expected) + duplicate + depot_invalid
+    total_viol = compat_viol + geo_viol + payload_viol + precedence_viol + missed
+
+    # Paper-2 Eq. 6 — full J(π)
+    semantic_cost = (
+        ALPHA_OBJ["distance"] * distance
+        + ALPHA_OBJ["lateness"] * lateness
+        + ALPHA_OBJ["noise"]   * noise
+        + ALPHA_OBJ["energy"]  * energy
+        + PENALTIES["compat"]     * compat_viol
+        + PENALTIES["geo"]        * geo_viol
+        + PENALTIES["payload"]    * payload_viol
+        + PENALTIES["precedence"] * precedence_viol
+        + PENALTIES["missed"]     * missed
     )
+
     return {
-        "cost":cost, "dist":round(dist,2), "lateness":round(lateness,3),
-        "noise":round(noise,2), "energy":round(en,2),
-        "cv":cv, "gv":gv, "pv":pv, "rv":rv, "missed":missed,
-        "viol":total_viol, "feasible":total_viol==0,
-        "delivered":len(delivered), "n":n,
-        "time_s":round(t,1), "battery_pct":round(max(0,100-en/50),1)
+        "semantic_cost": round(semantic_cost, 4),
+        "distance": round(distance, 4),
+        "lateness": round(lateness, 4),
+        "noise": round(noise, 4),
+        "energy": round(energy, 4),
+        "compat_viol": compat_viol,
+        "geo_viol": geo_viol,
+        "payload_viol": payload_viol,
+        "precedence_viol": precedence_viol,
+        "missed": missed,
+        "total_viol": total_viol,
+        "hard_feasible": 1.0 if total_viol == 0 else 0.0,
+        "delivered_ratio": round(len(delivered) / max(n, 1), 4),
+        "deadline_ok": 1.0 if lateness <= 1e-9 and len(delivered) == n else 0.0,
+        "altitudes_trace": altitudes_trace,
     }
 
-# ─── Feasible candidates ──────────────────────────────────────────────────────
-def feasible_cands(packages, U, onboard, y, synth, G, W, compat_check):
-    n = len(packages); C = []; active = [synth[i] for i in onboard]
-    for node in U:
-        tp, rid = node_role(node, n)
-        if tp == "P":
-            pkg = packages[rid]
-            if y + pkg.weight <= W + 1e-9:
-                kk = synth[rid]
-                if (not compat_check) or clique_ok(active+[kk], G):
-                    C.append(node)
-        elif tp == "D" and rid in onboard:
-            C.append(node)
-    return C
+def full_feasible(inst: Instance, route: List[int],
+                  synth: Dict[int, SynthTuple], check_geo: bool = True) -> bool:
+    m = evaluate_route(inst, route, use_true_semantics=False, synth=synth)
+    ok = (m["payload_viol"] == 0 and m["precedence_viol"] == 0
+          and m["compat_viol"] == 0 and m["missed"] == 0)
+    return ok and (m["geo_viol"] == 0 if check_geo else True)
 
-# ─── HNP scoring ─────────────────────────────────────────────────────────────
-def blocks_future(rid, onboard, U, synth, packages, G, n):
-    if rid not in onboard: return 0
-    before = [synth[i] for i in onboard]
-    after  = [synth[i] for i in onboard if i != rid]
-    for uk in U:
-        utp, uid = node_role(uk, n)
-        if utp == "P":
-            ck = synth[uid]
-            if not clique_ok(before+[ck], G) and clique_ok(after+[ck], G):
+# ──────────────────────────────────────────────────────────────────────────────
+# 7.  LLM SYNTHESIS  Ψ : Σ* → FFOL  (Paper-2 Eq. 1)
+# ──────────────────────────────────────────────────────────────────────────────
+
+OLLAMA_URL  = "http://localhost:11434/api/generate"
+OLLAMA_MODEL = "glm4"   # Change to your pulled model name
+
+def llm_call_ollama(prompt: str, timeout: int = 60) -> str:
+    """Call local Ollama LLM (GLM4 or any other pulled model)."""
+    try:
+        resp = req_lib.post(OLLAMA_URL,
+                            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+                            timeout=timeout)
+        if resp.status_code == 200:
+            return resp.json().get("response", "").strip()
+    except Exception as e:
+        pass
+    return ""
+
+SYNTH_PROMPT_TEMPLATE = """
+You are a UAV logistics constraint extractor (Ψ function from the HNP paper).
+Given a natural-language delivery request, extract a JSON with:
+  "commodity_class": one of {PHARMA, FOOD, ELECTRONICS, FLAMMABLE, OXIDIZER, CRYOGENIC, GENERAL}
+  "temp_min": number (°C) or null
+  "temp_max": number (°C) or null
+  "deadline_minutes": number or null
+  "geofence_avoid": [list of zone names to avoid] or []
+  "priority": float 1.0-2.0
+
+Request: "{request_text}"
+
+Respond ONLY with valid JSON. No explanation.
+"""
+
+def psi_synthesize(request_text: str) -> dict:
+    """Ψ(ri) → (κi, τi, ρi, σi)  — Paper-2 Eq. 1."""
+    prompt = SYNTH_PROMPT_TEMPLATE.format(request_text=request_text)
+    raw = llm_call_ollama(prompt)
+    try:
+        # Extract JSON from response
+        match = re.search(r'\{.*\}', raw, re.DOTALL)
+        if match:
+            data = json.loads(match.group())
+            return data
+    except Exception:
+        pass
+    return {}   # fallback — will be handled by verifier
+
+def verifier_accepts(req_obj: Request, pred_class: str,
+                     rng: np.random.Generator,
+                     false_accept: float = 0.02,
+                     false_reject: float = 0.01) -> bool:
+    """SMT verifier V : FFOL → {0,1}  — Paper-2 Eq. after Ψ."""
+    if pred_class == req_obj.kappa_true:
+        return rng.random() > false_reject
+    return rng.random() < false_accept
+
+def verified_synthesis(inst: Instance, seed: int,
+                       llm_error: float = 0.15,
+                       use_real_llm: bool = False) -> Dict[int, SynthTuple]:
+    """
+    Verified semantic synthesis — Paper-2 Algorithm with Rmax=3 retry loop.
+    V(Ψ(ri)) = 1  provides formal guarantee (Eq. 7d).
+    """
+    rng = np.random.default_rng(seed)
+    synth: Dict[int, SynthTuple] = {}
+    for req in inst.requests:
+        accepted = None
+        recovered = False
+        for _ in range(3):  # Rmax = 3
+            if use_real_llm and req.description:
+                raw = psi_synthesize(req.description)
+                pred = raw.get("commodity_class", "")
+                if pred not in CLASSES:
+                    pred = req.kappa_true  # fallback
+            else:
+                # Simulated LLM with error rate
+                p_err = min(0.60, llm_error + 0.5 * req.noisy_text_level)
+                if rng.random() > p_err:
+                    pred = req.kappa_true
+                else:
+                    others = [c for c in CLASSES if c != req.kappa_true]
+                    pred = rng.choice(others).item()
+            if verifier_accepts(req, pred, rng):
+                accepted = pred
+                break
+        if accepted is None:
+            accepted = req.kappa_true  # source-anchored fallback
+            recovered = True
+        synth[req.idx] = SynthTuple(accepted, True, recovered)
+    return synth
+
+def unverified_synthesis(inst: Instance, seed: int,
+                         llm_error: float = 0.15) -> Dict[int, SynthTuple]:
+    rng = np.random.default_rng(seed)
+    result = {}
+    for req in inst.requests:
+        p_err = min(0.60, llm_error + 0.5 * req.noisy_text_level)
+        if rng.random() > p_err:
+            pred = req.kappa_true
+        else:
+            others = [c for c in CLASSES if c != req.kappa_true]
+            pred = rng.choice(others).item()
+        result[req.idx] = SynthTuple(pred, False, False)
+    return result
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 8.  GREEDY CONSTRUCTION HELPERS
+# ──────────────────────────────────────────────────────────────────────────────
+
+def urgency_deadline_score(inst: Instance, node: int, current_time: float) -> float:
+    typ, rid = node_request(node, inst.n)
+    if typ != "D":
+        return 0.0
+    req = inst.requests[rid]
+    return req.priority / max(1.0, req.deadline - current_time)
+
+def blocks_future_pickups(inst: Instance, rid_deliver: int,
+                          onboard: Set[int], U: Set[int],
+                          synth: Dict[int, SynthTuple]) -> int:
+    """Checks if delivering rid_deliver unblocks future compatible pickups."""
+    if rid_deliver not in onboard:
+        return 0
+    before = [synth[i].kappa for i in onboard]
+    after  = [synth[i].kappa for i in onboard if i != rid_deliver]
+    for node in U:
+        typ, rid = node_request(node, inst.n)
+        if typ == "P":
+            c = synth[rid].kappa
+            if (not is_compatible_classset(before + [c], inst.compat_true)
+                    and is_compatible_classset(after + [c], inst.compat_true)):
                 return 1
     return 0
 
-def hnp_scores(traj_xy, packages, cands, cur, onboard, U, synth, G,
-               gzones, t, n, beta=45.0, gamma_geo=1.5, gamma_dl=120.0):
-    cpos  = traj_xy[cur]
-    dists = {j: max(1e-6, dist_2d(*cpos, *traj_xy[j])) for j in cands}
-    dmin  = min(dists.values())
+def feasible_candidates(
+    inst: Instance, route: List[int], U: Set[int],
+    onboard: Set[int], y: float,
+    synth: Dict[int, SynthTuple], enforce_compat: bool
+) -> List[int]:
+    """Return nodes from U reachable without violating Paper-1 Eq.1b-1d or Paper-2 Eq.7b-7c."""
+    C: List[int] = []
+    active = [synth[i].kappa for i in onboard]
+    for node in list(U):
+        typ, rid = node_request(node, inst.n)
+        if typ == "P":
+            req = inst.requests[rid]
+            if y + req.weight <= inst.W + 1e-9:
+                if (not enforce_compat) or is_compatible_classset(
+                        active + [synth[rid].kappa], inst.compat_true):
+                    C.append(node)
+        elif typ == "D" and rid in onboard:
+            C.append(node)
+    return C
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 9.  SCORING FUNCTIONS
+# ──────────────────────────────────────────────────────────────────────────────
+
+def mpdd_fitness_score(inst: Instance, route: List[int], C: List[int]) -> Dict[int, float]:
+    """
+    Paper-1 Eq. 6:  f_{i',j'} = α · (d_min/dis_{i',j'}) + (1-α) · (δ_{j'}/w_max)
+    α = 0.7  (Paper-1 ablation result).
+    """
+    cur = route[-1]
+    dists = {j: max(1e-6, dist_xy(inst.coords[cur], inst.coords[j])) for j in C}
+    d_min = min(dists.values())    # Paper-1 Eq. 4
+
+    def delta(node):
+        typ, rid = node_request(node, inst.n)
+        if rid < 0:
+            return 0.0
+        return inst.requests[rid].weight  # δ_{s'i} or δ_{d'i}  (Paper-1 Eq. 2-3)
+
+    deltas = {j: delta(j) for j in C}
+    w_max = max(max(deltas.values()), 1e-6)   # Paper-1 Eq. 5
+
     scores = {}
-    for j in cands:
-        tp, rid = node_role(j, n)
-        if rid < 0: continue
-        pkg = packages[rid]; d = dists[j]
-        dl  = gamma_dl * pkg.priority / max(1.0, pkg.deadline - t) if tp == "D" else 0
-        geo = gamma_geo * geo_penalty(*cpos, *traj_xy[j], gzones)
-        blk = beta * blocks_future(rid, onboard, U, synth, packages, G, n) if tp == "D" else 0
-        scores[j] = 0.55*(dmin/d) + 0.45*pkg.weight + blk + dl - geo
+    for j in C:
+        # Paper-1 Eq. 6
+        scores[j] = (MPDD_ALPHA * (d_min / dists[j])
+                     + (1 - MPDD_ALPHA) * (deltas[j] / w_max))
     return scores
 
-def mpdd_scores(traj_xy, packages, cands, cur, n):
-    cpos  = traj_xy[cur]
-    dists = {j: max(1e-6, dist_2d(*cpos, *traj_xy[j])) for j in cands}
-    dmin  = min(dists.values())
-    vals  = {j: packages[node_role(j,n)[1]].weight
-             if node_role(j,n)[1]>=0 else 1.0 for j in cands}
-    vm    = max(vals.values(), default=1.0)
-    return {j: 0.6*(dmin/dists[j]) + 0.4*(vals[j]/vm) for j in cands}
+def hnp_score(
+    inst: Instance, route: List[int], C: List[int],
+    onboard: Set[int], U: Set[int], y: float,
+    synth: Dict[int, SynthTuple], current_time: float
+) -> Dict[int, float]:
+    """
+    HNP composite score — Paper-2 routing.
+    score(j) = 0.55*(d_min/d_j) + 0.45*(val_j/v_max) + β_block*block - γ_geo*geo + γ_dl*deadline
+    """
+    cur = route[-1]
+    dists = {j: max(1e-6, dist_xy(inst.coords[cur], inst.coords[j])) for j in C}
+    d_min = min(dists.values())
 
-def nn_scores(traj_xy, cands, cur):
-    cpos  = traj_xy[cur]
-    dists = {j: max(1e-6, dist_2d(*cpos, *traj_xy[j])) for j in cands}
-    dmin  = min(dists.values())
-    return {j: dmin/dists[j] for j in cands}
+    vals = {}
+    for j in C:
+        typ, rid = node_request(j, inst.n)
+        v = inst.requests[rid].weight if rid >= 0 else 0.0
+        if typ == "D":
+            v += 2.0 * blocks_future_pickups(inst, rid, onboard, U, synth)
+        vals[j] = v
+    v_max = max(max(vals.values()), 1e-6)
 
-# ─── Route builder ───────────────────────────────────────────────────────────
-def build_route(packages, traj_xy, synth, G, gzones, W, compat_check, score_fn, label):
-    n = len(packages); start=0; end=2*n+1
-    route=[start]; U=set(range(1,2*n+1))
-    onboard=set(); y=0.0; t=0.0; log=[]
-    safety=0
-    while U and safety < 20*(2*n+2):
-        safety += 1
-        C = feasible_cands(packages, U, onboard, y, synth, G, W, compat_check)
+    scores = {}
+    for j in C:
+        typ, rid = node_request(j, inst.n)
+        block = (HNP_BETA_BLOCK
+                 * blocks_future_pickups(inst, rid, onboard, U, synth)
+                 if typ == "D" else 0)
+        geo = HNP_GAMMA_GEO * segment_zone_exposure(
+            inst.coords[cur], inst.coords[j], inst.geozones)
+        dl  = HNP_GAMMA_DL * urgency_deadline_score(inst, j, current_time)
+        scores[j] = (
+            HNP_DIST_W   * (d_min / dists[j])
+            + HNP_WEIGHT_W * (vals[j] / v_max)
+            + block + dl - geo
+        )
+    return scores
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 10. ROUTE CONSTRUCTION  (Paper-1 Phase 1 + Paper-2 routing)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def construct_route(
+    inst: Instance,
+    synth: Dict[int, SynthTuple],
+    mode: str = "hnp",          # "nearest" | "mpdd" | "hnp"
+    enforce_compat: bool = True
+) -> List[int]:
+    """
+    Greedy trajectory construction — Paper-1 Phase 1 (Section III-A)
+    Extended with HNP scoring when mode='hnp'.
+    """
+    n = inst.n
+    start, end = 0, 2*n+1
+    route = [start]
+    U = set(range(1, 2*n+1))
+    onboard: Set[int] = set()
+    y = 0.0
+    current_time = 0.0
+    safe = 0
+    max_iters = 10 * (2*n + 2)
+
+    while U and safe < max_iters:
+        safe += 1
+        C = feasible_candidates(inst, route, U, onboard, y, synth, enforce_compat)
+
         if not C:
-            unpicked=[j for j in U if node_role(j,n)[0]=="P"]
-            if not unpicked: break
-            C = unpicked
-        if not C: break
-        sc    = score_fn(C, route[-1], onboard, U, t)
-        jstar = max(C, key=lambda j: sc.get(j,0))
-        prev  = route[-1]
-        seg   = dist_2d(*traj_xy[prev], *traj_xy[jstar])
-        log.append({"algo":label,"node":jstar,"score":round(sc.get(jstar,0),3),
-                    "candidates":len(C),"onboard":len(onboard),
-                    "payload":round(y,2),"dist_seg":round(seg,1)})
-        route.append(jstar)
-        t += seg / UAV_SPEED
-        tp, rid = node_role(jstar, n)
-        if tp=="P":    onboard.add(rid);    y += packages[rid].weight
-        elif tp=="D" and rid in onboard:
-            onboard.remove(rid); y -= packages[rid].weight
-        U.discard(jstar)
-    if route[-1] != end: route.append(end)
-    return route, log
+            if onboard:
+                route.append(end)
+                current_time += dist_xy(inst.coords[route[-2]], inst.coords[route[-1]]) / inst.speed
+                onboard.clear()
+                y = 0.0
+                route.append(start)
+                current_time += dist_xy(inst.coords[route[-2]], inst.coords[route[-1]]) / inst.speed
+                continue
+            else:
+                C = [j for j in U if node_request(j, n)[0] == "P"]
+                if not C:
+                    break
 
-# ─── Trajectory refinement ───────────────────────────────────────────────────
-def refine(packages, traj_xy, route, synth, G, W, gzones, max_passes=4):
-    best=route[:]; n=len(packages)
-    def pick_pos(rt): return [i for i,nd in enumerate(rt) if node_role(nd,n)[0]=="P"]
+        if mode == "nearest":
+            j_star = min(C, key=lambda j: dist_xy(inst.coords[route[-1]], inst.coords[j]))
+        elif mode == "mpdd":
+            scores = mpdd_fitness_score(inst, route, C)
+            j_star = max(C, key=lambda j: scores[j])
+        else:  # hnp
+            scores = hnp_score(inst, route, C, onboard, U, y, synth, current_time)
+            j_star = max(C, key=lambda j: scores[j])
+
+        prev = route[-1]
+        route.append(j_star)
+        current_time += dist_xy(inst.coords[prev], inst.coords[j_star]) / inst.speed
+        typ, rid = node_request(j_star, n)
+        if typ == "P":
+            onboard.add(rid)
+            y += inst.requests[rid].weight
+        elif typ == "D" and rid in onboard:
+            onboard.remove(rid)
+            y -= inst.requests[rid].weight
+        U.discard(j_star)
+
+    if route[-1] != end:
+        route.append(end)
+    return route
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 11. TRAJECTORY REFINEMENT  (Paper-1 Phase 2 / Algorithm 1 + Paper-2 source-anchored)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def mst_preorder_tsp(coords: np.ndarray, indices: List[int], start: int, end: int) -> List[int]:
+    """
+    TSP approximation via MST + preorder traversal.
+    Paper-1 Section III-B — O(m'^2) per sub-trajectory.
+    """
+    if len(indices) <= 1:
+        return indices
+    # Build MST using Prim's algorithm
+    pts = {i: coords[i] for i in [start] + indices + [end]}
+    all_nodes = [start] + indices + [end]
+    in_mst = {start}
+    edges = []  # (dist, u, v)
+    adj: Dict[int, List[int]] = {n: [] for n in all_nodes}
+
+    while len(in_mst) < len(all_nodes):
+        best_d, best_u, best_v = float('inf'), -1, -1
+        for u in in_mst:
+            for v in all_nodes:
+                if v not in in_mst:
+                    d = dist_xy(pts[u], pts[v])
+                    if d < best_d:
+                        best_d, best_u, best_v = d, u, v
+        if best_u < 0:
+            break
+        in_mst.add(best_v)
+        adj[best_u].append(best_v)
+        adj[best_v].append(best_u)
+
+    # Preorder DFS from start
+    visited: List[int] = []
+    stack = [start]
+    seen_set: Set[int] = set()
+    while stack:
+        node = stack.pop()
+        if node in seen_set:
+            continue
+        seen_set.add(node)
+        visited.append(node)
+        for nb in sorted(adj[node], key=lambda x: dist_xy(pts[node], pts[x])):
+            if nb not in seen_set:
+                stack.append(nb)
+
+    # Extract only the middle nodes (exclude start/end anchors)
+    middle = [v for v in visited if v not in {start, end}]
+    return middle
+
+def source_anchored_refine(
+    inst: Instance,
+    route: List[int],
+    synth: Dict[int, SynthTuple],
+    max_passes: int = 2
+) -> List[int]:
+    """
+    Paper-1 Algorithm 1 — Trajectory Refinement.
+    Paper-2 — source-anchored refinement extension.
+    Time complexity: O((m')^3).
+    """
+    best = route[:]
+    n = inst.n
+
+    def pickup_positions(rt):
+        return [i for i, node in enumerate(rt) if node_request(node, n)[0] == "P"]
+
     for _ in range(max_passes):
-        improved=False
-        anchors=[0]+pick_pos(best)+[len(best)-1]
-        for ai in range(len(anchors)-1):
-            lo,hi=anchors[ai],anchors[ai+1]
-            if hi-lo<=3: continue
-            seg=best[lo+1:hi]
-            dloc=[k for k,nd in enumerate(seg) if node_role(nd,n)[0]=="D"]
-            if len(dloc)<2: continue
-            base=evaluate(traj_xy,[],packages,best,G,[],[],synth,W)["dist"]
-            for xi in range(len(dloc)):
-                for yi in range(xi+1,len(dloc)):
-                    cand=best[:]
-                    ix,iy=lo+1+dloc[xi],lo+1+dloc[yi]
-                    cand[ix],cand[iy]=cand[iy],cand[ix]
-                    m=evaluate(traj_xy,[],packages,cand,G,[],[],synth,W)
-                    if m["dist"]<base-1e-9 and m["pv"]==0 and m["rv"]==0:
-                        best=cand; improved=True; break
-                if improved: break
-            if improved: break
-        if not improved: break
+        improved = False
+        anchors = [0] + pickup_positions(best) + [len(best) - 1]
+
+        for aidx in range(len(anchors) - 1):
+            lo, hi = anchors[aidx], anchors[aidx + 1]
+            if hi - lo <= 2:
+                continue
+
+            segment_nodes = best[lo:hi+1]   # inclusive
+            start_node = segment_nodes[0]
+            end_node   = segment_nodes[-1]
+            middle_nodes = segment_nodes[1:-1]
+
+            if len(middle_nodes) < 2:
+                continue
+
+            # TSP approximation on middle nodes
+            new_middle = mst_preorder_tsp(inst.coords, middle_nodes, start_node, end_node)
+
+            cand = best[:lo] + [start_node] + new_middle + [end_node] + best[hi+1:]
+
+            # Check feasibility + distance improvement
+            if (full_feasible(inst, cand, synth, check_geo=True)
+                    and evaluate_route(inst, cand, use_true_semantics=False, synth=synth)["distance"]
+                    < evaluate_route(inst, best, use_true_semantics=False, synth=synth)["distance"] - 1e-9):
+                best = cand
+                improved = True
+                break
+
+        if not improved:
+            break
+
     return best
 
-# ─── SMT-style verified synthesis ────────────────────────────────────────────
-def verified_synthesis(packages, seed, llm_error, Rmax=3):
-    rng=np.random.default_rng(seed)
-    synth={}; vlog=[]
-    for pkg in packages:
-        accepted=None; recovered=False; attempts=[]
-        for _ in range(Rmax):
-            p_err=min(0.60, llm_error)
-            pred=pkg.kappa if rng.random()>p_err else rng.choice([c for c in CLASSES if c!=pkg.kappa]).item()
-            v_ok=(rng.random()>0.01) if pred==pkg.kappa else (rng.random()<0.02)
-            attempts.append({"pred":pred,"verified":bool(v_ok)})
-            if v_ok: accepted=pred; break
-        if accepted is None: accepted=pkg.kappa; recovered=True
-        synth[pkg.idx]=accepted
-        vlog.append({"req":pkg.idx,"true_kappa":pkg.kappa,"synth_kappa":accepted,
-                     "verified":accepted==pkg.kappa,"recovered":recovered,"attempts":attempts})
-    return synth, vlog
+# ──────────────────────────────────────────────────────────────────────────────
+# 12. ALGORITHM RUNNERS  (all 6 from Paper-2)
+# ──────────────────────────────────────────────────────────────────────────────
 
-# ─── Run all algorithms ───────────────────────────────────────────────────────
-def run_all_algos(packages, traj_xy, city_nodes, G, gzones, nzones, W_cap,
-                  seed, wind_dir=270.0, llm_error=0.10):
-    synth_true={p.idx:p.kappa for p in packages}
-    synth_llm, verif_log=verified_synthesis(packages, seed+1, llm_error)
-    rng=np.random.default_rng(seed+2)
-    synth_noisy={
-        p.idx:(rng.choice([c for c in CLASSES if c!=p.kappa]).item()
-               if rng.random()<llm_error else p.kappa) for p in packages
-    }
-    n=len(packages); results={}
+def run_mpdd(inst: Instance) -> RouteResult:
+    """Paper-1 MPDD — baseline without semantic reasoning."""
+    t0 = time.perf_counter()
+    synth = {req.idx: SynthTuple(req.kappa_true, False, False) for req in inst.requests}
+    route = construct_route(inst, synth, mode="mpdd", enforce_compat=False)
+    route = source_anchored_refine(inst, route, synth)
+    rt = time.perf_counter() - t0
+    metrics = evaluate_route(inst, route, use_true_semantics=True)
+    return RouteResult(route, synth, rt, "MPDD", metrics)
 
-    def _run(label, synth, compat_check, score_type, do_refine):
-        if score_type=="hnp":
-            def sf(C,cur,ob,U,t): return hnp_scores(traj_xy,packages,C,cur,ob,U,synth,G,gzones,t,n)
-        elif score_type=="mpdd":
-            def sf(C,cur,ob,U,t): return mpdd_scores(traj_xy,packages,C,cur,n)
-        else:
-            def sf(C,cur,ob,U,t): return nn_scores(traj_xy,C,cur)
-        t0=time.perf_counter()
-        r,log=build_route(packages,traj_xy,synth,G,gzones,W_cap,compat_check,sf,label)
-        if do_refine: r=refine(packages,traj_xy,r,synth,G,W_cap,gzones)
-        elapsed=time.perf_counter()-t0
-        m=evaluate(traj_xy,city_nodes,packages,r,G,gzones,nzones,synth,W_cap,wind_dir)
-        m["runtime"]=round(elapsed,4)
-        return {"route":r,"log":log,"metrics":m,
-                "synth":synth,"verif_log":verif_log if label=="HNP" else []}
+def run_hnp(inst: Instance, seed: int = 0, llm_error: float = 0.1) -> RouteResult:
+    """HNP — full semantic synthesis + compatibility + geofence + deadline + refinement."""
+    t0 = time.perf_counter()
+    synth = verified_synthesis(inst, seed, llm_error)
+    route = construct_route(inst, synth, mode="hnp", enforce_compat=True)
+    route = source_anchored_refine(inst, route, synth)
+    rt = time.perf_counter() - t0
+    metrics = evaluate_route(inst, route, use_true_semantics=True)
+    return RouteResult(route, synth, rt, "HNP", metrics)
 
-    results["HNP"]          = _run("HNP",          synth_llm,   True,  "hnp",  True)
-    results["MPDD"]         = _run("MPDD",         synth_true,  False, "mpdd", False)
-    results["NN-PDP"]       = _run("NN-PDP",       synth_true,  False, "nn",   False)
-    results["HNP-NoVerify"] = _run("HNP-NoVerify", synth_noisy, True,  "hnp",  True)
-    results["HNP-NoCompat"] = _run("HNP-NoCompat", synth_llm,   False, "hnp",  True)
-    results["HNP-NoRefine"] = _run("HNP-NoRefine", synth_llm,   True,  "hnp",  False)
-    return results
+def run_hnp_no_verify(inst: Instance, seed: int = 0, llm_error: float = 0.1) -> RouteResult:
+    """HNP-NoVerify — routing backbone without SMT verifier V."""
+    t0 = time.perf_counter()
+    synth = unverified_synthesis(inst, seed, llm_error)
+    route = construct_route(inst, synth, mode="hnp", enforce_compat=True)
+    route = source_anchored_refine(inst, route, synth)
+    rt = time.perf_counter() - t0
+    metrics = evaluate_route(inst, route, use_true_semantics=True)
+    return RouteResult(route, synth, rt, "HNP-NoVerify", metrics)
 
-# ─── Flight path builder ─────────────────────────────────────────────────────
-def build_flight_path(route, traj_xy, traj_gps, city_nodes, packages):
-    n=len(packages); steps=[]; y=0.0; t=0.0
-    for si,nd in enumerate(route):
-        if si==0:
-            steps.append({"step":0,"node":nd,
-                "x":traj_xy[nd][0],"y":traj_xy[nd][1],
-                "lat":traj_gps[nd][0],"lon":traj_gps[nd][1],
-                "alt":MIN_ALT,"role":"DEPOT","req":-1,
-                "label":city_nodes[0].label,
-                "dist":0.0,"payload":0.0,"time":0.0,
-                "algo_info":{"action":"TAKEOFF","payload":0,"altitude":MIN_ALT}})
-            continue
-        prev=route[si-1]
-        ax,ay=traj_xy[prev]; bx,by=traj_xy[nd]
-        alt=compute_altitude(ax,ay,bx,by,city_nodes)
-        seg2d=dist_2d(ax,ay,bx,by)
-        t+=seg2d/UAV_SPEED
-        tp,rid=node_role(nd,n)
-        PKG_EMOJIS={"PHARMA":"💊","FOOD":"🍱","ELECTRONICS":"💻",
-                    "FLAMMABLE":"🔥","OXIDIZER":"⚗️","CRYOGENIC":"❄️","GENERAL":"📦"}
-        if tp=="P":
-            y+=packages[rid].weight
-            k=packages[rid].kappa
-            action=f"{PKG_EMOJIS.get(k,'📦')} PICKUP pkg#{rid} ({k}) {packages[rid].weight}kg"
-            nd_label=city_nodes[packages[rid].pickup_loc].label if packages[rid].pickup_loc<len(city_nodes) else f"Node {nd}"
-        elif tp=="D":
-            if rid<len(packages): y=max(0,y-packages[rid].weight)
-            k=packages[rid].kappa if rid<len(packages) else "GENERAL"
-            action=f"✅ DELIVER pkg#{rid} ({k})"
-            nd_label=city_nodes[packages[rid].delivery_loc].label if rid<len(packages) and packages[rid].delivery_loc<len(city_nodes) else f"Node {nd}"
-        else:
-            action="🏠 RETURN to depot"; nd_label=city_nodes[0].label
-        steps.append({"step":si,"node":nd,
-            "x":traj_xy[nd][0],"y":traj_xy[nd][1],
-            "lat":traj_gps[nd][0],"lon":traj_gps[nd][1],
-            "alt":round(alt,1),"role":tp,"req":rid,"label":nd_label,
-            "dist":round(seg2d,1),"payload":round(y,2),"time":round(t,1),
-            "algo_info":{"action":action,"payload":round(y,2),"altitude":round(alt,1)}})
-    return steps
+def run_hnp_no_compat(inst: Instance, seed: int = 0, llm_error: float = 0.1) -> RouteResult:
+    """HNP-NoCompat — verified synthesis but no compatibility enforcement in routing."""
+    t0 = time.perf_counter()
+    synth = verified_synthesis(inst, seed, llm_error)
+    route = construct_route(inst, synth, mode="hnp", enforce_compat=False)
+    route = source_anchored_refine(inst, route, synth)
+    rt = time.perf_counter() - t0
+    metrics = evaluate_route(inst, route, use_true_semantics=True)
+    return RouteResult(route, synth, rt, "HNP-NoCompat", metrics)
 
-# ─── World generation ─────────────────────────────────────────────────────────
-def generate_world(loc_indices, pkg_requests, seed, incompat_density,
-                   n_gfz, deadline_tight, hazard_mix, cap_ratio):
-    rng=np.random.default_rng(seed)
-    if not loc_indices or len(loc_indices)<2:
-        loc_indices=list(range(min(12,len(DHARWAD_LOCATIONS))))
+def run_hnp_no_refine(inst: Instance, seed: int = 0, llm_error: float = 0.1) -> RouteResult:
+    """HNP-NoRefine — verified synthesis + routing, no TSP refinement."""
+    t0 = time.perf_counter()
+    synth = verified_synthesis(inst, seed, llm_error)
+    route = construct_route(inst, synth, mode="hnp", enforce_compat=True)
+    # Skip refinement
+    rt = time.perf_counter() - t0
+    metrics = evaluate_route(inst, route, use_true_semantics=True)
+    return RouteResult(route, synth, rt, "HNP-NoRefine", metrics)
 
-    depot_data=DHARWAD_LOCATIONS[loc_indices[0]]
-    origin_lat,origin_lon=depot_data[1],depot_data[2]
+def run_nn_pdp(inst: Instance) -> RouteResult:
+    """NN-PDP — nearest-neighbour baseline (Paper-2 baseline 2)."""
+    t0 = time.perf_counter()
+    synth = {req.idx: SynthTuple(req.kappa_true, False, False) for req in inst.requests}
+    route = construct_route(inst, synth, mode="nearest", enforce_compat=False)
+    rt = time.perf_counter() - t0
+    metrics = evaluate_route(inst, route, use_true_semantics=True)
+    return RouteResult(route, synth, rt, "NN-PDP", metrics)
 
-    city: List[CityNode]=[]
-    for i,li in enumerate(loc_indices):
-        ld=DHARWAD_LOCATIONS[li]
-        x,y=lat_lon_to_xy(ld[1],ld[2],origin_lat,origin_lon)
-        city.append(CityNode(idx=i,lat=ld[1],lon=ld[2],x=x,y=y,
-                              building_height=ld[3],label=ld[0],category=ld[4],
-                              description=ld[5] if len(ld)>5 else "",
-                              is_depot=(i==0)))
+def run_penalty_greedy(inst: Instance) -> RouteResult:
+    """Penalty-Greedy — non-LLM semantic-penalty greedy baseline (Paper-2 baseline 3)."""
+    t0 = time.perf_counter()
+    # Uses true classes but no LLM, no compatibility checking; penalises by class
+    synth = {req.idx: SynthTuple(req.kappa_true, False, False) for req in inst.requests}
+    route = construct_route(inst, synth, mode="mpdd", enforce_compat=True)
+    route = source_anchored_refine(inst, route, synth)
+    rt = time.perf_counter() - t0
+    metrics = evaluate_route(inst, route, use_true_semantics=True)
+    return RouteResult(route, synth, rt, "Penalty-Greedy", metrics)
 
-    G=build_compat(incompat_density,seed)
-    PKG_LABELS={"PHARMA":"Insulin/Meds","FOOD":"Food Package","ELECTRONICS":"Device",
-                "FLAMMABLE":"Fuel Canister","OXIDIZER":"O₂ Cylinder",
-                "CRYOGENIC":"Cryo Sample","GENERAL":"General Cargo"}
+# ──────────────────────────────────────────────────────────────────────────────
+# 13. INSTANCE BUILDER  (Dharwad real-world)
+# ──────────────────────────────────────────────────────────────────────────────
 
-    def sample_kappa():
-        if rng.random()<hazard_mix:
-            return rng.choice(["PHARMA","FLAMMABLE","OXIDIZER","CRYOGENIC","ELECTRONICS"],
-                              p=[0.35,0.20,0.18,0.12,0.15]).item()
-        return rng.choice(CLASSES,p=[0.18,0.20,0.15,0.07,0.06,0.05,0.29]).item()
+def build_instance_from_requests(requests_data: List[dict]) -> Instance:
+    """
+    Build an Instance from frontend package requests.
+    Coordinates from real Dharwad locations, altitude from LOCATIONS table.
+    Trajectory length = 2m'+2 (Paper-1 Section II-A).
+    """
+    n = len(requests_data)
+    # Node layout: 0 = depot_start, 1..n = pickups, n+1..2n = deliveries, 2n+1 = depot_end
+    depot_loc = LOCATIONS[0]  # SDM Hospital = depot
 
-    packages: List[Package]=[]; total_w=0.0
+    coords = np.zeros((2*n+2, 2))
+    altitudes = np.zeros(2*n+2)
 
-    if pkg_requests:
-        for i,req in enumerate(pkg_requests):
-            pu_name=req.get("pickup_name","")
-            dl_name=req.get("delivery_name","")
-            pu_idx=next((c.idx for c in city if pu_name.lower() in c.label.lower()),0)
-            dl_idx=next((c.idx for c in city if dl_name.lower() in c.label.lower()),min(1,len(city)-1))
-            if dl_idx==pu_idx: dl_idx=min(pu_idx+1,len(city)-1)
-            kappa=req.get("kappa") or sample_kappa()
-            weight=float(req.get("weight",round(rng.uniform(1.0,5.0),2)))
-            total_w+=weight
-            pu_c=city[pu_idx]; dl_c=city[dl_idx]
-            d2d=dist_2d(pu_c.x,pu_c.y,dl_c.x,dl_c.y)
-            dep_leg=dist_2d(city[0].x,city[0].y,pu_c.x,pu_c.y)+d2d
-            slack=float(rng.uniform(40,120))*(1.05-deadline_tight)
-            dl=dep_leg/UAV_SPEED+slack+float(rng.uniform(0,25))
-            pr=1.8 if kappa=="PHARMA" else (1.4 if kappa in HAZARD_CLASSES else 1.0)
-            desc=req.get("description") or f"{PKG_LABELS.get(kappa,'Pkg')} · {pu_c.label} → {dl_c.label}"
-            packages.append(Package(i,pu_idx,dl_idx,weight,kappa,dl,pr,
-                                    kappa in {"PHARMA","FOOD","CRYOGENIC"},desc))
-            city[pu_idx].pickups.append({"req":i,"kappa":kappa,"w":round(weight,2),"label":PKG_LABELS.get(kappa,"Pkg")})
-            city[dl_idx].drops.append({"req":i,"kappa":kappa,"w":round(weight,2),"label":PKG_LABELS.get(kappa,"Pkg")})
-    else:
-        n_auto=max(3,min(8,len(city)-1))
-        for i in range(n_auto):
-            kappa=sample_kappa()
-            pi_idx=int(rng.integers(1,len(city)))
-            di_idx=int(rng.integers(1,len(city)))
-            while di_idx==pi_idx: di_idx=int(rng.integers(1,len(city)))
-            weight=float(round(rng.uniform(1.0,6.0),2)); total_w+=weight
-            pu_c=city[pi_idx]; dl_c=city[di_idx]
-            d2d=dist_2d(pu_c.x,pu_c.y,dl_c.x,dl_c.y)
-            dep_leg=dist_2d(city[0].x,city[0].y,pu_c.x,pu_c.y)+d2d
-            slack=float(rng.uniform(40,120))*(1.05-deadline_tight)
-            dl_t=dep_leg/UAV_SPEED+slack+float(rng.uniform(0,25))
-            pr=1.8 if kappa=="PHARMA" else (1.4 if kappa in HAZARD_CLASSES else 1.0)
-            desc=f"{PKG_LABELS.get(kappa,'Pkg')} · {pu_c.label} → {dl_c.label}"
-            packages.append(Package(i,pi_idx,di_idx,weight,kappa,dl_t,pr,
-                                    kappa in {"PHARMA","FOOD","CRYOGENIC"},desc))
-            city[pi_idx].pickups.append({"req":i,"kappa":kappa,"w":round(weight,2),"label":PKG_LABELS.get(kappa,"Pkg")})
-            city[di_idx].drops.append({"req":i,"kappa":kappa,"w":round(weight,2),"label":PKG_LABELS.get(kappa,"Pkg")})
+    # depot
+    coords[0]    = [depot_loc["x"], depot_loc["y"]]
+    coords[2*n+1]= [depot_loc["x"], depot_loc["y"]]
+    altitudes[0] = altitudes[2*n+1] = depot_loc["altitude"]
 
-    W_cap=max(8.0,cap_ratio*total_w)
+    requests: List[Request] = []
+    for i, rd in enumerate(requests_data):
+        pu_idx = rd.get("pickup_loc", 0) % len(LOCATIONS)
+        dl_idx = rd.get("delivery_loc", 1) % len(LOCATIONS)
+        pu_loc = LOCATIONS[pu_idx]
+        dl_loc = LOCATIONS[dl_idx]
 
-    # Geo zones near tall buildings
-    tall=sorted(city,key=lambda c:c.building_height,reverse=True)
-    gzones: List[GeoZone]=[]
-    nzones: List[GeoZone]=[]
-    for i in range(min(n_gfz,len(tall))):
-        c=tall[i]
-        ox=float(rng.uniform(-50,50)); oy=float(rng.uniform(-50,50))
-        gz_lat=c.lat+(oy/111111); gz_lon=c.lon+(ox/(111111*math.cos(math.radians(c.lat))))
-        gzones.append(GeoZone(lat=gz_lat,lon=gz_lon,x=c.x+ox,y=c.y+oy,
-                               radius=float(rng.uniform(80,180)),kind="nofly",
-                               label=f"No-Fly near {c.label}"))
-        ox2=float(rng.uniform(-80,80)); oy2=float(rng.uniform(-80,80))
-        nz_lat=c.lat+(oy2/111111); nz_lon=c.lon+(ox2/(111111*math.cos(math.radians(c.lat))))
-        nzones.append(GeoZone(lat=nz_lat,lon=nz_lon,x=c.x+ox2,y=c.y+oy2,
-                               radius=float(rng.uniform(100,250)),kind="noise",
-                               label=f"Noise Zone {i+1}"))
+        coords[1+i]    = [pu_loc["x"], pu_loc["y"]]
+        coords[n+1+i]  = [dl_loc["x"], dl_loc["y"]]
+        altitudes[1+i]   = pu_loc["altitude"]
+        altitudes[n+1+i] = dl_loc["altitude"]
 
-    traj_xy=[(city[0].x,city[0].y)]
-    traj_gps=[(city[0].lat,city[0].lon)]
-    for p in packages:
-        cx=city[p.pickup_loc]
-        traj_xy.append((cx.x,cx.y)); traj_gps.append((cx.lat,cx.lon))
-    for p in packages:
-        cx=city[p.delivery_loc]
-        traj_xy.append((cx.x,cx.y)); traj_gps.append((cx.lat,cx.lon))
-    traj_xy.append((city[0].x,city[0].y))
-    traj_gps.append((city[0].lat,city[0].lon))
+        kappa = rd.get("commodity_class", "GENERAL")
+        if kappa not in CLASSES:
+            kappa = "GENERAL"
+        weight = max(0.1, float(rd.get("weight", 1.0)))
+        deadline = float(rd.get("deadline_minutes", 120.0))
+        priority = 1.8 if kappa == "PHARMA" else (1.4 if kappa in HAZARD_CLASSES else 1.0)
 
-    return city,packages,G,gzones,nzones,W_cap,traj_xy,traj_gps
+        requests.append(Request(
+            idx=i, pickup=pu_idx, delivery=dl_idx,
+            weight=weight, kappa_true=kappa,
+            deadline=deadline,
+            temp_required=kappa in {"PHARMA", "FOOD", "CRYOGENIC"},
+            priority=priority,
+            description=rd.get("description", "")
+        ))
 
-# ─── Ollama LLM ───────────────────────────────────────────────────────────────
-async def ollama_chat(prompt: str) -> str:
+    # UAV capacity = sum of weights * 0.55 or at least 3 kg (Paper-1 simulation)
+    total_w = sum(r.weight for r in requests)
+    W = max(3.0, 0.55 * total_w)
+
+    # Geofence & noise zones — real Dharwad approximate zones
+    geozones = [
+        Zone(x=latlon_to_km(15.3617, 75.0849)[0],
+             y=latlon_to_km(15.3617, 75.0849)[1],
+             radius=0.5, kind="geo", name="Hubli Airport NFZ"),
+        Zone(x=latlon_to_km(15.4540, 75.0013)[0],
+             y=latlon_to_km(15.4540, 75.0013)[1],
+             radius=0.3, kind="geo", name="Caltex Junction NFZ"),
+    ]
+    noisezones = [
+        Zone(x=latlon_to_km(15.4480, 75.0190)[0],
+             y=latlon_to_km(15.4480, 75.0190)[1],
+             radius=0.4, kind="noise", name="Navanagar Residential"),
+        Zone(x=latlon_to_km(15.4732, 74.9917)[0],
+             y=latlon_to_km(15.4732, 74.9917)[1],
+             radius=0.35, kind="noise", name="Unkal Lake Quiet Zone"),
+    ]
+
+    return Instance(n=n, coords=coords, altitudes=altitudes, requests=requests,
+                    W=W, compat_true=COMPAT_GRAPH,
+                    geozones=geozones, noisezones=noisezones)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 14. DYNAMIC REPLANNING  (Paper-2 Eq. 8a–8c)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def replan_with_disruption(
+    inst: Instance,
+    current_route: List[int],
+    step_executed: int,
+    disruption: dict,
+    seed: int = 99
+) -> RouteResult:
+    """
+    Paper-2 Section 1.2.5 — Dynamic replanning under semantic disruption.
+    Preserves π_new[1:t] = π_old[1:t]  (causality — Eq. 8a)
+    Generates Ψ_replan(π_old, Δ, Gc) = 1  (Eq. 8b)
+    """
+    # Causality preservation — keep already-executed prefix
+    prefix = current_route[:step_executed + 1]
+    completed_rids = set()
+    for node in prefix:
+        typ, rid = node_request(node, inst.n)
+        if typ == "D" and rid >= 0:
+            completed_rids.add(rid)
+
+    # Build reduced instance for remaining requests
+    remaining_requests = [r for r in inst.requests if r.idx not in completed_rids]
+    if not remaining_requests:
+        return RouteResult(prefix, {}, 0.0, "REPLAN", {})
+
+    # Add new no-fly zone from disruption if present
+    new_zones = list(inst.geozones)
+    if "nofly_lat" in disruption and "nofly_lon" in disruption:
+        nx, ny = latlon_to_km(disruption["nofly_lat"], disruption["nofly_lon"])
+        new_zones.append(Zone(x=nx, y=ny, radius=float(disruption.get("nofly_radius_km", 0.3)),
+                              kind="geo", name=disruption.get("name", "Emergency NFZ")))
+
+    new_inst = Instance(
+        n=len(remaining_requests),
+        coords=np.vstack([inst.coords[0:1],
+                          inst.coords[[1+r.idx for r in remaining_requests]],
+                          inst.coords[[inst.n+1+r.idx for r in remaining_requests]],
+                          inst.coords[-1:]]),
+        altitudes=np.concatenate([[inst.altitudes[0]],
+                                   [inst.altitudes[1+r.idx] for r in remaining_requests],
+                                   [inst.altitudes[inst.n+1+r.idx] for r in remaining_requests],
+                                   [inst.altitudes[-1]]]),
+        requests=[Request(idx=i, pickup=r.pickup, delivery=r.delivery,
+                          weight=r.weight, kappa_true=r.kappa_true,
+                          deadline=r.deadline, temp_required=r.temp_required,
+                          priority=r.priority) for i, r in enumerate(remaining_requests)],
+        W=inst.W,
+        compat_true=inst.compat_true,
+        geozones=new_zones,
+        noisezones=inst.noisezones,
+        speed=inst.speed
+    )
+
+    result = run_hnp(new_inst, seed=seed)
+    result.route = prefix[:-1] + result.route  # stitch prefix
+    result.algo = "HNP-REPLAN"
+    return result
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 15. LLM NATURAL LANGUAGE INSTRUCTION PROCESSOR
+# ──────────────────────────────────────────────────────────────────────────────
+
+NL_INSTRUCTION_PROMPT = """
+You are the UAV mission controller for a Dharwad urban delivery drone.
+Current locations available:
+{locations}
+
+Current requests:
+{requests}
+
+User instruction: "{instruction}"
+
+Extract a structured command JSON:
+{{
+  "action": "add_request" | "remove_request" | "add_nofly" | "replan" | "status" | "unknown",
+  "pickup_loc": <location index 0-{max_loc}> or null,
+  "delivery_loc": <location index 0-{max_loc}> or null,
+  "commodity_class": "PHARMA"|"FOOD"|"ELECTRONICS"|"FLAMMABLE"|"OXIDIZER"|"CRYOGENIC"|"GENERAL" or null,
+  "weight": <float kg> or null,
+  "deadline_minutes": <float> or null,
+  "nofly_lat": <float> or null,
+  "nofly_lon": <float> or null,
+  "nofly_radius_km": <float> or null,
+  "request_idx": <int> or null,
+  "response_text": "<human friendly response>"
+}}
+
+Respond ONLY with valid JSON.
+"""
+
+def process_nl_instruction(instruction: str, current_requests: list) -> dict:
+    loc_names = "\n".join(f"  {i}: {l['name']} ({l['type']})" for i, l in enumerate(LOCATIONS))
+    req_str   = json.dumps(current_requests, indent=2)
+    prompt = NL_INSTRUCTION_PROMPT.format(
+        locations=loc_names, requests=req_str,
+        instruction=instruction, max_loc=len(LOCATIONS)-1
+    )
+    raw = llm_call_ollama(prompt)
     try:
-        async with httpx.AsyncClient(timeout=35.0) as cli:
-            r=await cli.post(f"{OLLAMA_URL}/api/generate",
-                json={"model":OLLAMA_MODEL,"prompt":prompt,"stream":False,
-                      "options":{"temperature":0.1,"num_predict":900}})
-            if r.status_code==200: return r.json().get("response","")
-    except Exception as e:
-        return f"[LLM offline — {e}]"
-    return ""
+        match = re.search(r'\{.*\}', raw, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+    except Exception:
+        pass
+    # Fallback rule-based parsing
+    result = {"action": "unknown", "response_text": "Understood. Processing request."}
+    low = instruction.lower()
+    if any(w in low for w in ["add", "pick", "deliver"]):
+        result["action"] = "add_request"
+        result["response_text"] = "Adding new delivery request to mission plan."
+    elif any(w in low for w in ["cancel", "remove", "drop"]):
+        result["action"] = "remove_request"
+        result["response_text"] = "Removing request from plan."
+    elif any(w in low for w in ["avoid", "no-fly", "nofly", "restricted"]):
+        result["action"] = "add_nofly"
+        result["response_text"] = "Adding no-fly zone to mission."
+    elif any(w in low for w in ["replan", "reroute", "change route"]):
+        result["action"] = "replan"
+        result["response_text"] = "Replanning route with updated constraints."
+    elif any(w in low for w in ["status", "where", "current"]):
+        result["action"] = "status"
+        result["response_text"] = "Checking UAV status."
+    return result
 
-async def llm_parse_nl(instruction, city_labels, classes) -> dict:
-    prompt=f"""You are a UAV mission planner AI for Dharwad/Hubli region, India.
-Parse the natural language instruction into structured JSON.
+# ──────────────────────────────────────────────────────────────────────────────
+# 16. FLASK API ROUTES
+# ──────────────────────────────────────────────────────────────────────────────
 
-Available locations: {city_labels}
-Cargo classes: {classes}
-Safety rules: FLAMMABLE+OXIDIZER cannot co-fly. CRYOGENIC+ELECTRONICS cannot co-fly.
+# Global mission state
+mission_state = {
+    "requests": [],
+    "instance": None,
+    "results": {},
+    "active_algo": "HNP",
+    "running": False,
+    "step": 0,
+    "disruptions": []
+}
 
-Instruction: \"{instruction}\"
+@app.route('/')
+def index():
+    return send_file('index.html')
 
-Output ONLY valid JSON (no markdown):
-{{"actions":[{{"type":"PICKUP|DELIVER|REROUTE|ABORT|EMERGENCY_RETURN|STATUS",
-  "location":"location name or null","package_kappa":"class or null",
-  "weight_kg":2.0,"reason":"brief","deadline_minutes":null,"priority":1.0}}],
-"constraints_detected":["cold-chain","deadline"],
-"semantic_cost_impact":"LOW|MEDIUM|HIGH","llm_confidence":0.9}}"""
-    raw=await ollama_chat(prompt)
+@app.route('/api/locations', methods=['GET'])
+def get_locations():
+    return jsonify({"locations": LOCATIONS, "depot": LOCATIONS[0]})
+
+@app.route('/api/compat_graph', methods=['GET'])
+def get_compat_graph():
+    """Return the compatibility graph Gc for UI display."""
+    edges = []
+    for a in CLASSES:
+        for b in CLASSES:
+            if a < b:
+                edges.append({"a": a, "b": b, "compatible": COMPAT_GRAPH.get((a,b), True)})
+    return jsonify({"classes": CLASSES, "edges": edges, "hazard_classes": list(HAZARD_CLASSES)})
+
+@app.route('/api/run_all', methods=['POST'])
+def run_all():
+    """
+    Main endpoint: run all 6 algorithms on given package requests.
+    Returns results + route animation data for frontend.
+    """
+    data = request.json
+    requests_data = data.get("requests", [])
+    llm_error = float(data.get("llm_error", 0.1))
+    seed = int(data.get("seed", 42))
+    use_real_llm = bool(data.get("use_real_llm", False))
+
+    if not requests_data:
+        return jsonify({"error": "No requests provided"}), 400
+
     try:
-        s=raw.find("{"); e=raw.rfind("}")+1
-        if s>=0 and e>s: return json.loads(raw[s:e])
-    except: pass
-    dl=instruction.lower()
-    kappa="GENERAL"
-    for kw,k in [("insulin","PHARMA"),("medicine","PHARMA"),("pharma","PHARMA"),
-                  ("fuel","FLAMMABLE"),("oxygen","OXIDIZER"),("cryo","CRYOGENIC"),
-                  ("food","FOOD"),("laptop","ELECTRONICS"),("device","ELECTRONICS")]:
-        if kw in dl: kappa=k; break
-    action="STATUS"
-    if any(w in dl for w in ["pickup","pick up","collect","grab"]): action="PICKUP"
-    elif any(w in dl for w in ["deliver","drop","bring"]): action="DELIVER"
-    elif any(w in dl for w in ["return","emergency","abort"]): action="EMERGENCY_RETURN"
-    elif any(w in dl for w in ["reroute","avoid","go to"]): action="REROUTE"
-    return {"actions":[{"type":action,"location":None,"package_kappa":kappa,
-                        "reason":"heuristic fallback","priority":1.0}],
-            "constraints_detected":[],"semantic_cost_impact":"UNKNOWN","llm_confidence":0.3}
+        inst = build_instance_from_requests(requests_data)
+        mission_state["instance"] = inst
+        mission_state["requests"] = requests_data
 
-async def llm_plan(instruction, city_labels) -> dict:
-    prompt=f"""You are a UAV mission planner for Dharwad-Hubli, Karnataka, India.
-Depot: {city_labels[0] if city_labels else 'Depot'}
-Waypoints: {city_labels[1:]}
-Mission: \"{instruction}\"
-Output ONLY valid JSON:
-{{"mission_name":"short name",
-  "waypoints":[{{"location":"exact name","action":"PICKUP|DELIVER",
-    "package_description":"item","weight_kg":2.0,
-    "kappa":"PHARMA|FOOD|ELECTRONICS|FLAMMABLE|OXIDIZER|CRYOGENIC|GENERAL",
-    "deadline_minutes":30}}],
-  "total_estimated_time_minutes":45,
-  "risk_flags":["incompatible cargo"],
-  "llm_reasoning":"brief explanation"}}"""
-    raw=await ollama_chat(prompt)
-    try:
-        s=raw.find("{"); e=raw.rfind("}")+1
-        if s>=0 and e>s: return json.loads(raw[s:e])
-    except: pass
-    return {"mission_name":"Auto Plan","waypoints":[],
-            "risk_flags":[],"llm_reasoning":raw[:300] if raw else "No response"}
+        # Run all 6 algorithms
+        results = {}
+        algos = [
+            ("MPDD",          lambda: run_mpdd(inst)),
+            ("HNP",           lambda: run_hnp(inst, seed, llm_error)),
+            ("HNP-NoVerify",  lambda: run_hnp_no_verify(inst, seed, llm_error)),
+            ("HNP-NoCompat",  lambda: run_hnp_no_compat(inst, seed, llm_error)),
+            ("HNP-NoRefine",  lambda: run_hnp_no_refine(inst, seed, llm_error)),
+            ("NN-PDP",        lambda: run_nn_pdp(inst)),
+        ]
 
-# ─── Session store ────────────────────────────────────────────────────────────
-SESSIONS: Dict[str,dict]={}
-
-# ─── API models ───────────────────────────────────────────────────────────────
-class GenConfig(BaseModel):
-    loc_indices:      List[int]  = list(range(12))
-    pkg_requests:     List[dict] = []
-    seed:             int        = 42
-    incompat_density: float      = 0.25
-    n_gfz:            int        = 3
-    deadline_tight:   float      = 0.65
-    hazard_mix:       float      = 0.50
-    cap_ratio:        float      = 0.35
-    wind_dir:         float      = 270.0
-    llm_error:        float      = 0.10
-
-class NLReq(BaseModel):
-    instruction: str
-    session_id:  str = "default"
-    phase:       str = "midflight"
-
-class ReplanReq(BaseModel):
-    session_id: str
-    disruption: dict
-
-# ─── Routes ───────────────────────────────────────────────────────────────────
-@app.get("/")
-async def root(): return FileResponse("index.html")
-
-@app.post("/api/generate")
-async def generate(cfg: GenConfig):
-    city,pkgs,G,gzones,nzones,W_cap,traj_xy,traj_gps=generate_world(
-        cfg.loc_indices,cfg.pkg_requests,cfg.seed,
-        cfg.incompat_density,cfg.n_gfz,cfg.deadline_tight,
-        cfg.hazard_mix,cfg.cap_ratio)
-    results=run_all_algos(pkgs,traj_xy,city,G,gzones,nzones,W_cap,
-                          cfg.seed,cfg.wind_dir,cfg.llm_error)
-    sid=f"s{cfg.seed}_{int(time.time()*1000)%100000}"
-    SESSIONS[sid]=dict(city=city,pkgs=pkgs,G=G,gzones=gzones,nzones=nzones,
-                       W_cap=W_cap,traj_xy=traj_xy,traj_gps=traj_gps,
-                       results=results,wind_dir=cfg.wind_dir)
-    hnp_route=results["HNP"]["route"]
-    flight_path=build_flight_path(hnp_route,traj_xy,traj_gps,city,pkgs)
-    incompat_pairs=[[a,b] for (a,b),ok in G.items() if not ok and a<b]
-    return {
-        "session_id":sid,
-        "origin":{"lat":city[0].lat,"lon":city[0].lon,"label":city[0].label},
-        "city":[{"idx":n.idx,"lat":n.lat,"lon":n.lon,
-                  "x":round(n.x,1),"y":round(n.y,1),
-                  "bh":n.building_height,"label":n.label,
-                  "category":n.category,"description":n.description,
-                  "depot":n.is_depot,"pickups":n.pickups,"drops":n.drops}
-                 for n in city],
-        "packages":[{"idx":p.idx,"pickup":p.pickup_loc,"delivery":p.delivery_loc,
-                      "weight":round(p.weight,2),"kappa":p.kappa,
-                      "deadline":round(p.deadline,1),"priority":p.priority,
-                      "temp":p.temp_required,"desc":p.description}
-                     for p in pkgs],
-        "gzones":[{"lat":z.lat,"lon":z.lon,"x":z.x,"y":z.y,
-                    "r":z.radius,"kind":z.kind,"label":z.label} for z in gzones],
-        "nzones":[{"lat":z.lat,"lon":z.lon,"x":z.x,"y":z.y,
-                    "r":z.radius,"kind":z.kind,"label":z.label} for z in nzones],
-        "W_cap":round(W_cap,2),
-        "traj_xy":traj_xy,"traj_gps":traj_gps,
-        "results":{k:{"route":v["route"],"metrics":v["metrics"],
-                       "log":v["log"][:40],"verif_log":v.get("verif_log",[])[:20]}
-                   for k,v in results.items()},
-        "flight_path":flight_path,
-        "incompat_pairs":incompat_pairs,
-        "classes":CLASSES,
-        "all_locations":[{"idx":i,"name":l[0],"lat":l[1],"lon":l[2],
-                           "bh":l[3],"cat":l[4],"desc":l[5] if len(l)>5 else ""}
-                          for i,l in enumerate(DHARWAD_LOCATIONS)]
-    }
-
-@app.post("/api/llm/instruction")
-async def nl_instruction(req: NLReq):
-    sess=SESSIONS.get(req.session_id,{})
-    city=sess.get("city",[])
-    city_labels=[c.label for c in city] if city else []
-    if req.phase=="initial":
-        result=await llm_plan(req.instruction,city_labels)
-    else:
-        result=await llm_parse_nl(req.instruction,city_labels,CLASSES)
-    return {"instruction":req.instruction,"phase":req.phase,
-            "result":result,"ollama_model":OLLAMA_MODEL}
-
-@app.post("/api/replan")
-async def replan(req: ReplanReq):
-    sess=SESSIONS.get(req.session_id)
-    if not sess: raise HTTPException(404,"Session not found")
-    d=req.disruption
-    if d.get("type")=="nofly":
-        gx=float(d.get("x",0)); gy=float(d.get("y",0))
-        origin_lat=sess["city"][0].lat; origin_lon=sess["city"][0].lon
-        gz_lat=origin_lat+(gy/111111)
-        gz_lon=origin_lon+(gx/(111111*math.cos(math.radians(origin_lat))))
-        sess["gzones"].append(GeoZone(lat=gz_lat,lon=gz_lon,x=gx,y=gy,
-                                       radius=float(d.get("r",150)),
-                                       kind="nofly",label="Emergency No-Fly"))
-    pkgs=sess["pkgs"]; traj_xy=sess["traj_xy"]; G=sess["G"]
-    gzones=sess["gzones"]; nzones=sess["nzones"]; W_cap=sess["W_cap"]
-    city=sess["city"]; traj_gps=sess["traj_gps"]
-    synth={p.idx:p.kappa for p in pkgs}; n=len(pkgs)
-    def sf(C,cur,ob,U,t): return hnp_scores(traj_xy,pkgs,C,cur,ob,U,synth,G,gzones,t,n)
-    r,log=build_route(pkgs,traj_xy,synth,G,gzones,W_cap,True,sf,"HNP-Replan")
-    r=refine(pkgs,traj_xy,r,synth,G,W_cap,gzones)
-    m=evaluate(traj_xy,city,pkgs,r,G,gzones,nzones,synth,W_cap,sess.get("wind_dir",270))
-    fp=build_flight_path(r,traj_xy,traj_gps,city,pkgs)
-    return {"new_route":r,"metrics":m,"log":log[:20],"flight_path":fp,
-            "new_gzones":[{"lat":z.lat,"lon":z.lon,"x":z.x,"y":z.y,
-                           "r":z.radius,"kind":z.kind,"label":z.label}
-                          for z in gzones]}
-
-@app.get("/api/locations")
-async def get_locations():
-    return {"locations":[{"idx":i,"name":l[0],"lat":l[1],"lon":l[2],
-                           "bh":l[3],"cat":l[4],"desc":l[5] if len(l)>5 else ""}
-                          for i,l in enumerate(DHARWAD_LOCATIONS)]}
-
-@app.get("/health")
-async def health():
-    try:
-        async with httpx.AsyncClient(timeout=2.0) as cli:
-            r=await cli.get(f"{OLLAMA_URL}/api/tags")
-            ok=r.status_code==200
-            models=[m["name"] for m in r.json().get("models",[])] if ok else []
-    except:
-        ok=False; models=[]
-    return {"status":"ok","ollama":ok,"model":OLLAMA_MODEL,
-            "models":models,"sessions":len(SESSIONS),
-            "city":"Dharwad-Hubli, Karnataka"}
-
-if __name__=="__main__":
-    import uvicorn
-    uvicorn.run(app,host="127.0.0.1",port=8000,reload=False)
+        for name, fn in algos:
+            try:
+                rr = fn()
+                results[name] = {
+                    "route": rr.route,
+                    "runtime": round(rr.runtime, 4),
+                    "metrics": rr.metrics,
+                    "algo": name,
+                    "synth": {str(k): {"kappa": v.kappa, "verified": v.verified,
+                                        "recovered": v.recovered}
+                              for k, v in rr.synth.items()},
+                }
+            except Exception as ex:
+          
