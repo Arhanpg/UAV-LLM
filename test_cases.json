@@ -1,0 +1,264 @@
+{
+  "description": "UAV-LLM v4 Sample Test Cases — Dharwad-Hubli Region",
+  "base_url": "http://localhost:8000",
+
+  "test_cases": [
+    {
+      "id": "TC-01",
+      "name": "Medical Emergency — SDM Hospital to KIMS",
+      "description": "Urgent insulin + cryo sample pickup from SDM Hospital, deliver to KIMS. Tests PHARMA priority and cold-chain constraints.",
+      "endpoint": "POST /api/generate",
+      "body": {
+        "loc_indices": [0, 1, 2, 5, 11, 14, 15],
+        "pkg_requests": [
+          {
+            "pickup_name": "SDM Hospital",
+            "delivery_name": "KIMS Hospital",
+            "kappa": "PHARMA",
+            "weight": 1.5,
+            "description": "Insulin vials — cold-chain required"
+          },
+          {
+            "pickup_name": "SDM Hospital",
+            "delivery_name": "KIMS Hospital",
+            "kappa": "CRYOGENIC",
+            "weight": 2.0,
+            "description": "Cryo tissue sample — time-critical"
+          }
+        ],
+        "seed": 42,
+        "incompat_density": 0.2,
+        "n_gfz": 2,
+        "deadline_tight": 0.8,
+        "hazard_mix": 0.6,
+        "cap_ratio": 0.5,
+        "wind_dir": 270.0,
+        "llm_error": 0.05
+      },
+      "expected": {
+        "HNP_feasible": true,
+        "no_compat_violations": true,
+        "PHARMA_delivered": true
+      }
+    },
+    {
+      "id": "TC-02",
+      "name": "Multi-Drop Food + Electronics — Urban Oasis Mall Hub",
+      "description": "Pickup food from KR Market and electronics from IIT Dharwad, deliver to Urban Oasis Mall and BVB College. Tests multi-commodity routing.",
+      "endpoint": "POST /api/generate",
+      "body": {
+        "loc_indices": [0, 5, 9, 10, 6, 7, 14, 15],
+        "pkg_requests": [
+          {
+            "pickup_name": "IIT Dharwad",
+            "delivery_name": "BVB College",
+            "kappa": "ELECTRONICS",
+            "weight": 3.5,
+            "description": "Laptop + accessories — fragile"
+          },
+          {
+            "pickup_name": "Urban Oasis Mall",
+            "delivery_name": "KIMS Hospital",
+            "kappa": "FOOD",
+            "weight": 2.0,
+            "description": "Patient meal delivery"
+          },
+          {
+            "pickup_name": "Dharwad Industrial Area",
+            "delivery_name": "Almatti Road Warehouse",
+            "kappa": "GENERAL",
+            "weight": 4.0,
+            "description": "Industrial spare parts"
+          }
+        ],
+        "seed": 7,
+        "incompat_density": 0.3,
+        "n_gfz": 3,
+        "deadline_tight": 0.55,
+        "hazard_mix": 0.4,
+        "cap_ratio": 0.4,
+        "wind_dir": 180.0,
+        "llm_error": 0.1
+      },
+      "expected": {
+        "all_delivered": true,
+        "no_payload_violation": true
+      }
+    },
+    {
+      "id": "TC-03",
+      "name": "Hazardous Cargo Isolation — Flammable vs Oxidizer",
+      "description": "Tests that FLAMMABLE and OXIDIZER packages are NEVER co-loaded. HNP should separate them across trips.",
+      "endpoint": "POST /api/generate",
+      "body": {
+        "loc_indices": [0, 1, 2, 5, 18, 19, 14],
+        "pkg_requests": [
+          {
+            "pickup_name": "Dharwad Industrial Area",
+            "delivery_name": "Almatti Road Warehouse",
+            "kappa": "FLAMMABLE",
+            "weight": 3.0,
+            "description": "Fuel canister — dangerous goods"
+          },
+          {
+            "pickup_name": "Dharwad Industrial Area",
+            "delivery_name": "Gokul Road Commercial Hub",
+            "kappa": "OXIDIZER",
+            "weight": 2.5,
+            "description": "Oxygen cylinder — must not mix with fuel"
+          },
+          {
+            "pickup_name": "SDM Hospital",
+            "delivery_name": "KIMS Hospital",
+            "kappa": "PHARMA",
+            "weight": 1.0,
+            "description": "Antibiotics — priority delivery"
+          }
+        ],
+        "seed": 13,
+        "incompat_density": 0.15,
+        "n_gfz": 2,
+        "deadline_tight": 0.6,
+        "hazard_mix": 0.9,
+        "cap_ratio": 0.45,
+        "wind_dir": 90.0,
+        "llm_error": 0.08
+      },
+      "expected": {
+        "HNP_compat_violations": 0,
+        "FLAMMABLE_OXIDIZER_never_coloaded": true
+      }
+    },
+    {
+      "id": "TC-04",
+      "name": "Airport Logistics — Hubli Airport Hub",
+      "description": "Cargo routing through Hubli Airport. Tests geo-zone avoidance near airbase perimeter.",
+      "endpoint": "POST /api/generate",
+      "body": {
+        "loc_indices": [12, 0, 5, 9, 13, 20, 21],
+        "pkg_requests": [
+          {
+            "pickup_name": "Hubli Airport",
+            "delivery_name": "SDM Hospital",
+            "kappa": "PHARMA",
+            "weight": 2.0,
+            "description": "Air-freighted medicines"
+          },
+          {
+            "pickup_name": "Hubli Airport",
+            "delivery_name": "Urban Oasis Mall",
+            "kappa": "ELECTRONICS",
+            "weight": 4.5,
+            "description": "Imported electronics shipment"
+          }
+        ],
+        "seed": 99,
+        "incompat_density": 0.2,
+        "n_gfz": 4,
+        "deadline_tight": 0.5,
+        "hazard_mix": 0.3,
+        "cap_ratio": 0.6,
+        "wind_dir": 315.0,
+        "llm_error": 0.12
+      },
+      "expected": {
+        "geo_violations": 0,
+        "feasible": true
+      }
+    },
+    {
+      "id": "TC-05",
+      "name": "Auto-Generate — Full City Stress Test",
+      "description": "No custom packages. System auto-generates 6 packages across 12 Dharwad locations. Benchmarks all 6 algorithms.",
+      "endpoint": "POST /api/generate",
+      "body": {
+        "loc_indices": [0,1,2,3,4,5,6,7,8,9,10,11],
+        "pkg_requests": [],
+        "seed": 2024,
+        "incompat_density": 0.3,
+        "n_gfz": 3,
+        "deadline_tight": 0.7,
+        "hazard_mix": 0.5,
+        "cap_ratio": 0.35,
+        "wind_dir": 270.0,
+        "llm_error": 0.15
+      },
+      "expected": {
+        "HNP_cost_less_than_NN": true,
+        "all_algorithms_run": true,
+        "packages_count": 6
+      }
+    },
+    {
+      "id": "TC-06",
+      "name": "NL Chat — Mid-flight Reroute",
+      "description": "After running TC-01, send a natural language reroute instruction via GLM4.",
+      "prerequisite": "Run TC-01 first and copy session_id",
+      "endpoint": "POST /api/llm/instruction",
+      "body": {
+        "instruction": "Avoid the area near KIMS Hospital due to traffic jam, reroute insulin delivery via Dharwad Railway Station instead",
+        "session_id": "REPLACE_WITH_SESSION_ID_FROM_TC01",
+        "phase": "midflight"
+      },
+      "expected": {
+        "action_type": "REROUTE",
+        "package_kappa": "PHARMA",
+        "llm_confidence_gt": 0.6
+      }
+    },
+    {
+      "id": "TC-07",
+      "name": "Emergency Replan — Sudden No-Fly Zone",
+      "description": "Inject an emergency no-fly zone at Hubli Airport coordinates and trigger replan.",
+      "prerequisite": "Run TC-04 first and copy session_id",
+      "endpoint": "POST /api/replan",
+      "body": {
+        "session_id": "REPLACE_WITH_SESSION_ID_FROM_TC04",
+        "disruption": {
+          "type": "nofly",
+          "x": -5500.0,
+          "y": -1000.0,
+          "r": 300
+        }
+      },
+      "expected": {
+        "replanned": true,
+        "new_route_avoids_zone": true
+      }
+    }
+  ],
+
+  "curl_examples": {
+    "TC-01_curl": "curl -X POST http://localhost:8000/api/generate -H 'Content-Type: application/json' -d @- <<'EOF'\n{\"loc_indices\":[0,1,2,5,11,14,15],\"pkg_requests\":[{\"pickup_name\":\"SDM Hospital\",\"delivery_name\":\"KIMS Hospital\",\"kappa\":\"PHARMA\",\"weight\":1.5,\"description\":\"Insulin vials\"}],\"seed\":42,\"n_gfz\":2,\"deadline_tight\":0.8,\"hazard_mix\":0.6,\"cap_ratio\":0.5,\"llm_error\":0.05}\nEOF",
+    "health_check": "curl http://localhost:8000/health",
+    "list_locations": "curl http://localhost:8000/api/locations"
+  },
+
+  "location_index_reference": {
+    "0": "SDM Hospital & Medical College (Dharwad) — DEFAULT DEPOT",
+    "1": "KIMS Hospital Dharwad",
+    "2": "Suretech Hospital (Dharwad)",
+    "3": "Navodaya Medical College",
+    "4": "Govt District Hospital Dharwad",
+    "5": "Urban Oasis Mall (Hubli)",
+    "6": "Akshay Park Mall (Hubli)",
+    "7": "Big Bazaar Dharwad",
+    "8": "Karnataka University",
+    "9": "BVB College of Engineering (Hubli)",
+    "10": "IIT Dharwad",
+    "11": "Dharwad Railway Station",
+    "12": "Hubli Airport (HBX)",
+    "13": "Hubli Railway Station",
+    "14": "KSRTC Bus Stand Dharwad",
+    "15": "Dharwad Town Hall Ground",
+    "16": "Indira Gandhi Glass House Garden",
+    "17": "Unkal Lake (Hubli)",
+    "18": "Dharwad Industrial Area",
+    "19": "Almatti Road Warehouse",
+    "20": "Gokul Road Commercial Hub (Hubli)",
+    "21": "Dharwad DC Office",
+    "22": "Hubli Municipal Corporation",
+    "23": "Siddharoodha Math",
+    "24": "Nrupatunga Betta"
+  }
+}
