@@ -16,7 +16,7 @@ from app.algorithms.routing import build_route
 from app.algorithms.tsp_refine import refine
 from app.config import CLASSES, OLLAMA_BASE_URL, OLLAMA_MODEL
 from app.geo.locations import generate_world, load_locations
-from app.llm.ollama_client import llm_parse_nl, llm_plan
+from app.llm.nl_mission_parser import parse as nl_parse
 from app.models.mission import GeoZone
 from app.models.session import GenConfig, NLReq, ReplanReq, SessionStore
 from app.services.flight_path import build_flight_path
@@ -155,11 +155,9 @@ async def nl_instruction(req: NLReq):
     sess = SESSIONS.get(req.session_id) or {}
     city = sess.get("city", [])
     city_labels = [c.label for c in city] if city else []
-    if req.phase == "initial":
-        result = await llm_plan(req.instruction, city_labels)
-    else:
-        result = await llm_parse_nl(req.instruction, city_labels, CLASSES)
-    return {"instruction": req.instruction, "phase": req.phase, "result": result, "ollama_model": OLLAMA_MODEL}
+    phase = "preflight" if req.phase in ("initial", "preflight") else "midflight"
+    result = await nl_parse(req.instruction, city_labels, phase)
+    return {"instruction": req.instruction, "phase": phase, "result": result, "ollama_model": OLLAMA_MODEL}
 
 
 @app.post("/api/replan")

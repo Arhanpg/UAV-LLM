@@ -35,6 +35,19 @@ PENALTIES = {
 ALPHA_OBJ = {"distance": 1.0, "lateness": 1.8, "noise": 0.55, "energy": 0.08}
 MPDD_ALPHA = 0.7
 
+# Commodity physical properties (Paper 2 Eq. 2, verifier structural checks).
+TEMP_ENVELOPES = {  # (τ_min, τ_max) °C
+    "PHARMA": (2.0, 8.0),
+    "FOOD": (0.0, 25.0),
+    "ELECTRONICS": (-10.0, 45.0),
+    "FLAMMABLE": (-20.0, 40.0),
+    "OXIDIZER": (-20.0, 40.0),
+    "CRYOGENIC": (-196.0, -50.0),
+    "GENERAL": (-40.0, 60.0),
+}
+HAZARD = {"FLAMMABLE": "FLAMMABLE", "OXIDIZER": "OXIDIZER", "CRYOGENIC": "CRYOGENIC"}
+TEMP_SENSITIVE = {"PHARMA", "FOOD", "CRYOGENIC"}
+
 UAV_SPEED = 15.0
 ROTOR_K = 0.04
 MIN_ALT = 30.0
