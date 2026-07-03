@@ -1,13 +1,27 @@
 """Flight path builder for 3D visualization."""
 
-from app.algorithms.altitude import compute_altitude
+from app.algorithms.altitude import corridor_cruise_altitude, rate_limited_profile
 from app.algorithms.routing import node_role
 from app.config import MIN_ALT, UAV_SPEED
+from app.geo.buildings import load_building_index
 from app.geo.projection import dist_2d
+
+
+def altitude_profile(route, traj_xy, city_nodes):
+    """Rate-limited 3D vertical profile for the whole route (spec §8.4)."""
+    bindex = load_building_index(city_nodes[0].lat, city_nodes[0].lon) if city_nodes else None
+    pts = [traj_xy[nd] for nd in route]
+    cruise = [MIN_ALT]
+    for k in range(1, len(route)):
+        ax, ay = traj_xy[route[k - 1]]
+        bx, by = traj_xy[route[k]]
+        cruise.append(corridor_cruise_altitude(ax, ay, bx, by, bindex))
+    return rate_limited_profile(pts, cruise), cruise
 
 
 def build_flight_path(route, traj_xy, traj_gps, city_nodes, packages):
     n = len(packages)
+    bindex = load_building_index(city_nodes[0].lat, city_nodes[0].lon) if city_nodes else None
     steps = []
     y = 0.0
     t = 0.0
@@ -44,7 +58,7 @@ def build_flight_path(route, traj_xy, traj_gps, city_nodes, packages):
         prev = route[si - 1]
         ax, ay = traj_xy[prev]
         bx, by = traj_xy[nd]
-        alt = compute_altitude(ax, ay, bx, by, city_nodes)
+        alt = corridor_cruise_altitude(ax, ay, bx, by, bindex)
         seg2d = dist_2d(ax, ay, bx, by)
         t += seg2d / UAV_SPEED
         tp, rid = node_role(nd, n)

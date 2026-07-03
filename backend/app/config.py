@@ -40,3 +40,10 @@ ROTOR_K = 0.04
 MIN_ALT = 30.0
 CLEARANCE = 12.0
 EARTH_R = 6371000.0
+
+# Corridor-based altitude planning (Phase 2, spec §8.4)
+BUILDINGS_PATH = DATA_DIR / "buildings_dharwad.geojson"
+CORRIDOR_WIDTH = 15.0       # m — buffer either side of the straight-line path
+ALT_SAFETY_MARGIN = 15.0    # m — clearance above the tallest building in corridor
+MAX_CEILING = 120.0         # m — max operational ceiling (regulatory-style clamp)
+VERTICAL_SPEED = 3.0        # m/s — climb/descent rate limit (no z teleporting)
