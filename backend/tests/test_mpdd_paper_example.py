@@ -1,63 +1,87 @@
-import pytest
-from app.algorithms.mpdd import mpdd_fitness_score, compute_delta
+"""Golden regression test — Paper 1, Fig. 1 worked example.
 
-# Golden correctness test (test_mpdd_paper_example.py): reproduce Paper 1's Fig. 1 worked example exactly
-# locations 1, 2, 3, 4; s1 = 1 with D1 = {2, 3, 4}; s2 = 3 with D2 = {2, 4};
-# verify the dummy-location expansion produces 5 source/destination pairs (s'1..s'5, d'1..d'5)
-# with the co-location rule correctly merging location 3's role as both source and destination.
+s1 = location 1 with D1 = {2, 3, 4}; s2 = location 3 with D2 = {2, 4}.
+After dummy-location splitting there are 5 one-to-one source/destination pairs
+(s'1..s'5, d'1..d'5). Location 3 acts as both a source (for s2's packages) and a
+destination (for one of s1's packages), so the δ co-location rule (Eq. 2) must
+merge the droppable weight at that node. This is the single most important
+regression test in the project — if it fails, the core algorithm is broken.
+"""
 
-class MockRequest:
-    def __init__(self, idx, pickup, delivery, weight):
+from app.algorithms.mpdd import compute_delta, mpdd_fitness_score, node_role
+
+
+class MockPkg:
+    """Dummy source/destination pair with a one-to-one package."""
+
+    def __init__(self, idx, pickup_loc, delivery_loc, weight):
         self.idx = idx
-        self.pickup = pickup
-        self.delivery = delivery
+        self.pickup_loc = pickup_loc
+        self.delivery_loc = delivery_loc
         self.weight = weight
 
-def test_paper1_fig1_dummy_expansion():
-    # Setup Paper 1 Fig 1
-    # s1 = 1 -> {2,3,4}
-    # s2 = 3 -> {2,4}
-    packages = [
-        MockRequest(0, 1, 2, 1.0),
-        MockRequest(1, 1, 3, 1.0),
-        MockRequest(2, 1, 4, 1.0),
-        MockRequest(3, 3, 2, 1.0),
-        MockRequest(4, 3, 4, 1.0),
-    ]
-    # The dummy source/destination pairs:
-    # s'1 (loc 1) -> d'1 (loc 2) : pkg 0
-    # s'2 (loc 1) -> d'2 (loc 3) : pkg 1
-    # s'3 (loc 1) -> d'3 (loc 4) : pkg 2
-    # s'4 (loc 3) -> d'4 (loc 2) : pkg 3
-    # s'5 (loc 3) -> d'5 (loc 4) : pkg 4
-    
-    # We should have nodes 1..5 as pickups and 6..10 as deliveries
-    def node_role(node, n):
-        if 1 <= node <= n: return "P", node - 1
-        if n + 1 <= node <= 2 * n: return "D", node - (n + 1)
-        return "DEPOT", -1
 
-    def K_i_fn(s_node, onboard):
-        # returns d_nodes co-located with s_node that are already picked up
-        # s_node is dummy source (e.g., node 4 which is s'4 at loc 3)
-        typ, rid = node_role(s_node, len(packages))
-        pickup_loc = packages[rid].pickup
-        colocated = []
-        for other_rid in onboard:
-            d_node = other_rid + len(packages) + 1
-            if packages[other_rid].delivery == pickup_loc:
-                colocated.append(d_node)
-        return colocated
+# Paper 1 Fig. 1 → 5 packages after dummy splitting.
+#   pkg0: s'1 loc1 -> d'1 loc2      pkg3: s'4 loc3 -> d'4 loc2
+#   pkg1: s'2 loc1 -> d'2 loc3      pkg4: s'5 loc3 -> d'5 loc4
+#   pkg2: s'3 loc1 -> d'3 loc4
+PACKAGES = [
+    MockPkg(0, 1, 2, 0.6),
+    MockPkg(1, 1, 3, 0.7),
+    MockPkg(2, 1, 4, 0.8),
+    MockPkg(3, 3, 2, 0.6),
+    MockPkg(4, 3, 4, 0.7),
+]
+N = len(PACKAGES)
 
-    # If s'4 (node 4, loc 3) is considered, and pkg 1 (s'2->d'2, delivery=3) is onboard:
-    # pkg 1 delivers to loc 3. So d'2 is co-located with s'4.
-    delta_d2 = compute_delta(1 + 5 + 1, node_role, packages, {1}, K_i_fn)
-    assert delta_d2 == 1.0
-    
-    delta_s4 = compute_delta(4, node_role, packages, {1}, K_i_fn)
-    # w'4 + delta(d'2) = 1.0 + 1.0 = 2.0
-    assert delta_s4 == 2.0
 
-def test_mpdd_fitness():
-    # test f(i', j') = α · (d_min / dis(i', j')) + (1-α) · (δ(j') / w_max)
-    pass
+def K_i(node, onboard):
+    """Dummy destinations co-located with source ``node`` already on board."""
+    _, rid = node_role(node, N)
+    src_loc = PACKAGES[rid].pickup_loc
+    return [oid + N + 1 for oid in onboard if PACKAGES[oid].delivery_loc == src_loc]
+
+
+def test_dummy_expansion_node_encoding():
+    # 5 pickup nodes (1..5), 5 delivery nodes (6..10), depot 0 and 11.
+    pickups = [node_role(nd, N) for nd in range(1, N + 1)]
+    dests = [node_role(nd, N) for nd in range(N + 1, 2 * N + 1)]
+    assert [r for r, _ in pickups] == ["P"] * 5
+    assert [r for r, _ in dests] == ["D"] * 5
+    assert node_role(0, N) == ("DEPOT", -1)
+    assert node_role(2 * N + 1, N) == ("DEPOT", -1)
+    # Total trajectory length 2m'+2 including depot start/end (Paper 1 §II-A).
+    assert 2 * N + 2 == 12
+
+
+def test_delta_destination_is_own_weight():
+    # δ(d'_i) = w'_i  (Eq. 3). d'2 is node 1 + N + 1 = 7 (package 1).
+    d2 = N + 1 + 1  # node 7
+    assert compute_delta(d2, node_role, PACKAGES, set(), K_i) == 0.7
+
+
+def test_delta_source_merges_colocated_drop():
+    # s'4 (node 4) is at location 3. Package 1 (d'2) delivers to location 3.
+    # If package 1 is already onboard, δ(s'4) = w'4 + δ(d'2) = 0.6 + 0.7 = 1.3.
+    s4 = 4
+    assert abs(compute_delta(s4, node_role, PACKAGES, {1}, K_i) - 1.3) < 1e-9
+    # Without package 1 onboard there is nothing to drop → δ = w'4 only.
+    assert compute_delta(s4, node_role, PACKAGES, set(), K_i) == 0.6
+
+
+def test_location3_is_source_and_destination():
+    # Location 3 is the delivery of pkg1 (d'2) AND the pickup of pkg3, pkg4.
+    dest_pkgs = [p.idx for p in PACKAGES if p.delivery_loc == 3]
+    src_pkgs = [p.idx for p in PACKAGES if p.pickup_loc == 3]
+    assert dest_pkgs == [1]
+    assert src_pkgs == [3, 4]
+
+
+def test_fitness_equation():
+    # f = α·(d_min/dis) + (1-α)·(δ/w_max) with α = 0.7.
+    f = mpdd_fitness_score(dmin=10.0, dist_ij=10.0, delta_j=2.0, wmax=2.0, alpha=0.7)
+    assert abs(f - 1.0) < 1e-9
+    # Closer + heavier candidate scores higher than a far, light one.
+    near = mpdd_fitness_score(5.0, 5.0, 2.0, 2.0)
+    far = mpdd_fitness_score(5.0, 50.0, 0.5, 2.0)
+    assert near > far

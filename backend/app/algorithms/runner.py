@@ -7,7 +7,7 @@ import numpy as np
 
 from app.algorithms.cost import evaluate
 from app.algorithms.hnp import hnp_scores
-from app.algorithms.mpdd import mpdd_fitness_score
+from app.algorithms.mpdd import mpdd_scores
 from app.algorithms.nn_baseline import nn_scores
 from app.algorithms.routing import build_route
 from app.algorithms.tsp_refine import refine
@@ -67,18 +67,7 @@ def run_all_algos(packages, traj_xy, city_nodes, G, gzones, nzones, W_cap, seed,
         elif score_type == "mpdd":
 
             def sf(C, cur, ob, U, t):
-                def K_i_fn(s_node, onboard):
-                    from app.algorithms.routing import node_role
-                    typ, rid = node_role(s_node, n)
-                    if rid < 0: return []
-                    pickup_loc = packages[rid].pickup_loc
-                    colocated = []
-                    for other_rid in onboard:
-                        if packages[other_rid].delivery_loc == pickup_loc:
-                            d_node = other_rid + n + 1
-                            colocated.append(d_node)
-                    return colocated
-                return mpdd_fitness_score(traj_xy, cur, C, packages, ob, K_i_fn)
+                return mpdd_scores(traj_xy, packages, C, cur, n, ob)
 
         else:
 

@@ -1,101 +1,110 @@
-"""Phase 2 trajectory refinement — source-anchored TSP (Paper 1 Algorithm 1)."""
-from app.algorithms.routing import node_role
+"""Phase 2 trajectory refinement — Paper 1 Algorithm 1 (exact control flow).
+
+Sub-trajectories are delimited by consecutive source (pickup) positions. Each is
+re-solved as an open TSP (fixed start, fixed end) via an MST-preorder
+approximation [13]. The extend-then-fallback control flow, including the
+``i ← max(i+1, j-1)`` backtrack, follows Algorithm 1 line-for-line.
+"""
+
 from app.algorithms.cost import evaluate
+from app.algorithms.mpdd import node_role
+from app.geo.projection import dist_2d
 
-def mst_preorder_tsp(coords, indices, start, end):
+
+def mst_preorder_tsp(nodes, traj_xy):
+    """Open-TSP approximation over ``nodes`` with fixed first/last node.
+
+    Builds a minimum spanning tree (Prim) over the node set rooted at the start
+    node, takes a preorder traversal to order the visit, then forces the tour to
+    *end* at the fixed terminal node rather than return to the root (Paper 1
+    §III-B). O(k^2) in the sub-trajectory length k → O((m')^2) overall.
     """
-    MST-preorder TSP approximation.
-    Builds a minimum spanning tree over the sub-trajectory's locations rooted at the start node,
-    then does a preorder traversal. Tour must end at `end` rather than return to `start`.
-    """
-    if not indices:
-        return []
-        
-    import math
-    def dist(a, b):
-        return math.hypot(a[0] - b[0], a[1] - b[1])
-        
-    all_nodes = [start] + indices + [end]
-    in_mst = {start}
-    adj = {node: [] for node in all_nodes}
-    
-    while len(in_mst) < len(all_nodes):
-        best_d, best_u, best_v = float('inf'), -1, -1
-        for u in in_mst:
-            for v in all_nodes:
-                if v not in in_mst:
-                    d = dist(coords[u], coords[v])
-                    if d < best_d:
-                        best_d, best_u, best_v = d, u, v
-        if best_u < 0:
-            break
-        in_mst.add(best_v)
-        adj[best_u].append(best_v)
-        adj[best_v].append(best_u)
-        
-    visited_order = []
-    stack = [(start, -1)]
-    visited_set = set()
+    if len(nodes) <= 2:
+        return nodes[:]
+    start, end = nodes[0], nodes[-1]
+    pts = {nd: traj_xy[nd] for nd in nodes}
+
+    # Prim's MST rooted at the start node.
+    in_tree = {start}
+    children: dict[int, list[int]] = {nd: [] for nd in nodes}
+    remaining = set(nodes) - {start}
+    while remaining:
+        best_edge = None
+        best_d = float("inf")
+        for u in in_tree:
+            ux, uy = pts[u]
+            for v in remaining:
+                d = dist_2d(ux, uy, *pts[v])
+                if d < best_d:
+                    best_d, best_edge = d, (u, v)
+        u, v = best_edge
+        children[u].append(v)
+        in_tree.add(v)
+        remaining.discard(v)
+
+    # Preorder traversal from the root (nearest child first).
+    order: list[int] = []
+    stack = [start]
     while stack:
-        node, parent = stack.pop()
-        if node in visited_set:
-            continue
-        visited_set.add(node)
-        visited_order.append(node)
-        
-        children = sorted([nb for nb in adj[node] if nb != parent],
-                           key=lambda x: dist(coords[node], coords[x]))
-        for child in reversed(children): 
-            stack.append((child, node))
-            
-    middle = [v for v in visited_order if v not in {start, end}]
-    return middle
+        nd = stack.pop()
+        order.append(nd)
+        kids = sorted(children[nd], key=lambda c: dist_2d(*pts[nd], *pts[c]), reverse=True)
+        stack.extend(kids)
 
-def refine(packages, traj_xy, route, synth, G, W, gzones):
-    """
-    Paper 1 Algorithm 1: Exact control flow
-    """
+    # Force the fixed start first and the fixed terminal last (open TSP).
+    return [start] + [nd for nd in order if nd not in (start, end)] + [end]
+
+
+def _source_positions(route, n):
+    """1-indexed source-position array s[]: s[1..m'] are pickup positions in the
+    route; s[m'+1] is the final depot position (Paper 1 §III-B)."""
+    pos = [None]  # s[0] unused (1-indexed to mirror the paper)
+    pos.extend(p for p, nd in enumerate(route) if node_role(nd, n)[0] == "P")
+    pos.append(len(route) - 1)  # s[m'+1] = return-to-depot
+    return pos
+
+
+def _route_dist(route, traj_xy):
+    return sum(
+        dist_2d(*traj_xy[route[k]], *traj_xy[route[k + 1]]) for k in range(len(route) - 1)
+    )
+
+
+def refine(packages, traj_xy, route, synth, G, W, gzones, nzones=None, city_nodes=None):
+    """Algorithm 1 — return a refined copy of ``route``."""
     n = len(packages)
-    
-    def pick_pos(rt):
-        # returns indices of route that are source (pickup) nodes
-        return [idx for idx, nd in enumerate(rt) if node_role(nd, n)[0] == "P"]
+    route = route[:]
+    gzones = gzones if gzones is not None else []
+    nzones = nzones if nzones is not None else []
+    city_nodes = city_nodes if city_nodes is not None else []
+    m_prime = n
 
-    best = route[:]
-    anchors = [0] + pick_pos(best) + [len(best) - 1]
-    m_prime = len(anchors) - 2 
-    
+    def feasible(rt):
+        m = evaluate(traj_xy, city_nodes, packages, rt, G, gzones, nzones, synth, W)
+        return m.get("pv", 0) == 0 and m.get("rv", 0) == 0 and m.get("cv", 0) == 0
+
     i = 1
-    while i < m_prime + 1:
-        if anchors[i+1] - anchors[i] > 2:
-            extended = False
+    guard = 0
+    while i < m_prime + 1 and guard < 4 * (m_prime + 2) ** 2:
+        guard += 1
+        s = _source_positions(route, n)  # recompute; sub-TSP preserves positions
+        if s[i + 1] - s[i] > 2:
+            advanced = False
             for j in range(i + 1, m_prime + 2):
-                lo, hi = anchors[i], anchors[j]
-                
-                segment_nodes = best[lo:hi+1]
-                start_node = segment_nodes[0]
-                end_node = segment_nodes[-1]
-                middle_nodes = segment_nodes[1:-1]
-                
-                new_middle = mst_preorder_tsp(traj_xy, middle_nodes, start_node, end_node)
-                cand = best[:lo] + [start_node] + new_middle + [end_node] + best[hi+1:]
-                
-                # Check feasible and strictly shorter
-                base_m = evaluate(traj_xy, [], packages, best, G, [], [], synth, W)
-                cand_m = evaluate(traj_xy, [], packages, cand, G, [], [], synth, W)
-                
-                if (cand_m["dist"] < base_m["dist"] - 1e-9 and 
-                    cand_m["pv"] == 0 and cand_m["rv"] == 0 and cand_m["cv"] == 0):
-                    best = cand
-                    anchors = [0] + pick_pos(best) + [len(best) - 1]
-                    extended = True
+                start, end = s[i], s[j]
+                tra = route[start : end + 1]
+                new_tra = mst_preorder_tsp(tra, traj_xy)
+                d_old = _route_dist(tra, traj_xy)
+                d_new = _route_dist(new_tra, traj_xy)
+                cand = route[:start] + new_tra + route[end + 1 :]
+                if d_new <= d_old + 1e-9 and feasible(cand):
+                    route = cand  # replace and keep extending (j+1)
                 else:
                     i = max(i + 1, j - 1)
+                    advanced = True
                     break
-            else:
-                if not extended:
-                    i = i + 1
+            if not advanced:
+                i = m_prime + 1  # extended to the depot — done
         else:
-            i = i + 1
-            
-    return best
+            i += 1
+    return route

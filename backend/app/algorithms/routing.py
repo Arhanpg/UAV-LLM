@@ -1,16 +1,11 @@
 """Greedy route construction and node role helpers."""
 
 from app.algorithms.compat_graph import clique_ok
+from app.algorithms.mpdd import node_role  # canonical node_role, re-exported
 from app.config import UAV_SPEED
 from app.geo.projection import dist_2d
 
-
-def node_role(node: int, n: int) -> tuple[str, int]:
-    if 1 <= node <= n:
-        return "P", node - 1
-    if n + 1 <= node <= 2 * n:
-        return "D", node - (n + 1)
-    return "DEPOT", -1
+__all__ = ["node_role", "feasible_cands", "build_route"]
 
 
 def feasible_cands(packages, U, onboard, y, synth, G, W, compat_check):

@@ -3,7 +3,7 @@
 from fastapi.testclient import TestClient
 
 from app.algorithms.compat_graph import build_compat, clique_ok
-from app.algorithms.mpdd import mpdd_fitness_score
+from app.algorithms.mpdd import mpdd_scores
 from app.config import CLASSES, OLLAMA_MODEL
 from app.geo.locations import load_locations
 from app.main import app

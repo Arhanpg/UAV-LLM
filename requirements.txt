@@ -1,8 +1,1 @@
-<<<<<<< HEAD
 -r backend/requirements.txt
-=======
-flask>=3.0.0
-flask-cors>=4.0.0
-numpy>=1.26.0
-requests>=2.31.0
->>>>>>> 644630dfec55c15f577f5bb99ebc4870ee362e04

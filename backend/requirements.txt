@@ -6,6 +6,10 @@ pydantic>=2.7.0
 python-multipart>=0.0.9
 python-dotenv>=1.0.0
 
+# Persistence (Phase 4) + formal verification (Phase 3)
+sqlmodel>=0.0.16
+z3-solver>=4.13.0
+
 # Dev / test (Phase 0+)
 pytest>=8.0.0
 pytest-asyncio>=0.23.0

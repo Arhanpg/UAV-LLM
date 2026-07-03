@@ -29,3 +29,7 @@ frontend/.vite/
 # Build artifacts
 dist/
 build/
+mpdd.pdf
+UAV_LLM_Project_organized.pdf
+UAV_LLM_NEXT_LEVEL_BUILD_PROMPT.md
+semantic_uav_delivery_stress_final.ipynb
