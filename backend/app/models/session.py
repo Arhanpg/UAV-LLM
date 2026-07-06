@@ -24,7 +24,9 @@ class NLReq(BaseModel):
 
 class ReplanReq(BaseModel):
     session_id: str
-    disruption: dict
+    disruption: dict = {}
+    flown_steps: int = 0
+    instruction: str = ""  # optional NL disruption description
 
 
 class SessionRecord(BaseModel):

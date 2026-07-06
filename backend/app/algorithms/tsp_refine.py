@@ -9,6 +9,7 @@ approximation [13]. The extend-then-fallback control flow, including the
 from app.algorithms.cost import evaluate
 from app.algorithms.mpdd import node_role
 from app.geo.projection import dist_2d
+from app.ws.telemetry import emit
 
 
 def mst_preorder_tsp(nodes, traj_xy):
@@ -70,14 +71,16 @@ def _route_dist(route, traj_xy):
     )
 
 
-def refine(packages, traj_xy, route, synth, G, W, gzones, nzones=None, city_nodes=None):
+def refine(packages, traj_xy, route, synth, G, W, gzones, nzones=None, city_nodes=None, telemetry=False):
     """Algorithm 1 — return a refined copy of ``route``."""
     n = len(packages)
     route = route[:]
     gzones = gzones if gzones is not None else []
     nzones = nzones if nzones is not None else []
     city_nodes = city_nodes if city_nodes is not None else []
-    m_prime = n
+    # Number of sources actually present in this route (a replan suffix may
+    # carry fewer than the full n, so we count rather than assume).
+    m_prime = sum(1 for nd in route if node_role(nd, n)[0] == "P")
 
     def feasible(rt):
         m = evaluate(traj_xy, city_nodes, packages, rt, G, gzones, nzones, synth, W)
@@ -97,7 +100,19 @@ def refine(packages, traj_xy, route, synth, G, W, gzones, nzones=None, city_node
                 d_old = _route_dist(tra, traj_xy)
                 d_new = _route_dist(new_tra, traj_xy)
                 cand = route[:start] + new_tra + route[end + 1 :]
-                if d_new <= d_old + 1e-9 and feasible(cand):
+                ok = feasible(cand)
+                accepted = d_new <= d_old + 1e-9 and ok
+                if telemetry:
+                    emit(
+                        "phase2_mst_built",
+                        i=i, j=j, start=start, end=end, sub_len=len(tra), order=new_tra,
+                    )
+                    emit(
+                        "phase2_subtrajectory_attempt",
+                        i=i, j=j, d_old=round(d_old, 1), d_new=round(d_new, 1),
+                        feasible=ok, accepted=accepted,
+                    )
+                if accepted:
                     route = cand  # replace and keep extending (j+1)
                 else:
                     i = max(i + 1, j - 1)
@@ -107,4 +122,6 @@ def refine(packages, traj_xy, route, synth, G, W, gzones, nzones=None, city_node
                 i = m_prime + 1  # extended to the depot — done
         else:
             i += 1
+    if telemetry:
+        emit("phase2_refine_result", route=route, dist=round(_route_dist(route, traj_xy), 1))
     return route

@@ -12,6 +12,7 @@ from app.algorithms.nn_baseline import nn_scores
 from app.algorithms.routing import build_route
 from app.algorithms.tsp_refine import refine
 from app.config import CLASSES
+from app.ws.telemetry import emit
 
 
 def verified_synthesis(packages, seed, llm_error, Rmax=3):
@@ -47,9 +48,20 @@ def verified_synthesis(packages, seed, llm_error, Rmax=3):
     return synth, vlog
 
 
-def run_all_algos(packages, traj_xy, city_nodes, G, gzones, nzones, W_cap, seed, wind_dir=270.0, llm_error=0.10):
+def run_all_algos(
+    packages, traj_xy, city_nodes, G, gzones, nzones, W_cap, seed,
+    wind_dir=270.0, llm_error=0.10, synth_llm=None, verif_log=None,
+):
+    """Run all six algorithms.
+
+    ``synth_llm``/``verif_log`` come from the real LLM Ψ synthesis in live mode
+    (see services.mission_service). When omitted, they are produced by the
+    benchmark noise-injection model for reproducing the notebook's plots.
+    """
     synth_true = {p.idx: p.kappa for p in packages}
-    synth_llm, verif_log = verified_synthesis(packages, seed + 1, llm_error)
+    if synth_llm is None:
+        synth_llm, verif_log = verified_synthesis(packages, seed + 1, llm_error)
+    verif_log = verif_log or []
     rng = np.random.default_rng(seed + 2)
     synth_noisy = {
         p.idx: (rng.choice([c for c in CLASSES if c != p.kappa]).item() if rng.random() < llm_error else p.kappa)
@@ -75,12 +87,20 @@ def run_all_algos(packages, traj_xy, city_nodes, G, gzones, nzones, W_cap, seed,
                 return nn_scores(traj_xy, C, cur)
 
         t0 = time.perf_counter()
-        r, log = build_route(packages, traj_xy, synth, G, gzones, W_cap, compat_check, sf, label)
+        tel = label == "HNP"  # stream telemetry only for the primary run
+        r, log = build_route(packages, traj_xy, synth, G, gzones, W_cap, compat_check, sf, label, telemetry=tel)
         if do_refine:
-            r = refine(packages, traj_xy, r, synth, G, W_cap, gzones)
+            r = refine(packages, traj_xy, r, synth, G, W_cap, gzones, nzones, city_nodes, telemetry=tel)
         elapsed = time.perf_counter() - t0
         m = evaluate(traj_xy, city_nodes, packages, r, G, gzones, nzones, synth, W_cap, wind_dir)
         m["runtime"] = round(elapsed, 4)
+        if tel:
+            emit(
+                "route_finalized",
+                algo=label,
+                route=r,
+                metrics={k: m[k] for k in ("cost", "dist", "energy", "noise", "lateness", "time_s", "feasible", "viol")},
+            )
         return {
             "route": r,
             "log": log,
