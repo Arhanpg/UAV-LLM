@@ -169,19 +169,22 @@ def discrepancy(smt_result: dict, evaluate_result: dict) -> Optional[str]:
 
     Returns a human-readable message when they disagree, else None.
     """
-    smt_ok = smt_result.get("ok", False)
-    # Ignore deadline in the cross-check: cost.evaluate folds lateness into the
-    # objective rather than a hard feasibility flag.
-    cost_feasible = evaluate_result.get("feasible", None)
-    if cost_feasible is None:
+    # Compare only the hard constraints both sides actually model: payload (pv),
+    # clique/compat (cv), and precedence (rv). cost.evaluate's overall `feasible`
+    # flag additionally folds in geofence/missed nodes and deadline lateness,
+    # which the Z3 route check does not encode — so those are excluded here.
+    if not all(k in evaluate_result for k in ("cv", "pv", "rv")):
         return None
-    smt_hard = smt_result.get("payload_ok", True) and smt_result.get("clique_ok", True) and smt_result.get(
-        "precedence_ok", True
+    cost_hard = evaluate_result["cv"] == 0 and evaluate_result["pv"] == 0 and evaluate_result["rv"] == 0
+    smt_hard = (
+        smt_result.get("payload_ok", True)
+        and smt_result.get("clique_ok", True)
+        and smt_result.get("precedence_ok", True)
     )
-    if smt_hard != cost_feasible:
+    if smt_hard != cost_hard:
         return (
             f"VERIFIER DISCREPANCY: Z3 says {'feasible' if smt_hard else 'infeasible'} "
-            f"but cost.evaluate says {'feasible' if cost_feasible else 'infeasible'} "
-            f"(cv={evaluate_result.get('cv')}, pv={evaluate_result.get('pv')}, rv={evaluate_result.get('rv')})"
+            f"but cost.evaluate says {'feasible' if cost_hard else 'infeasible'} "
+            f"(cv={evaluate_result['cv']}, pv={evaluate_result['pv']}, rv={evaluate_result['rv']})"
         )
     return None
