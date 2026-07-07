@@ -5,6 +5,7 @@ import { ComparisonDashboard } from './panels/ComparisonDashboard'
 import { MissionBuilder } from './panels/MissionBuilder'
 import { CompatGraphView } from './panels/CompatGraphView'
 import { NLInstructionPanel } from './panels/NLInstructionPanel'
+import { DisruptionPanel } from './panels/DisruptionPanel'
 import { useMission } from './store/missionStore'
 import { useTelemetry } from './ws/useTelemetry'
 
@@ -14,6 +15,7 @@ const TABS = [
   { id: 'build', label: 'Build', el: <MissionBuilder /> },
   { id: 'gc', label: 'Gc Graph', el: <CompatGraphView /> },
   { id: 'chat', label: 'LLM Chat', el: <NLInstructionPanel /> },
+  { id: 'disrupt', label: 'Disrupt', el: <DisruptionPanel /> },
 ]
 
 function Sidebar() {
