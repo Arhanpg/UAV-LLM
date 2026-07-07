@@ -15,7 +15,7 @@ import time
 from app.algorithms.compat_graph import build_compat
 from app.algorithms.cost import evaluate
 from app.algorithms.hnp import hnp_scores
-from app.algorithms.routing import build_route, node_role
+from app.algorithms.routing import build_route
 from app.algorithms.runner import run_all_algos
 from app.algorithms.tsp_refine import refine
 from app.config import CLASSES, LLM_MODE, OLLAMA_MODEL
@@ -143,7 +143,8 @@ async def generate_mission(cfg) -> dict:
         "traj_xy": traj_xy, "traj_gps": traj_gps, "results": results, "wind_dir": cfg.wind_dir,
         "synth_llm": hnp["synth"], "config": cfg.model_dump(),
     })
-    payload = {"session_id": sid, **_serialize(city, pkgs, gzones, nzones, G, W_cap, traj_xy, traj_gps, results, flight_path, alt_prof, verifier, mode)}
+    body = _serialize(city, pkgs, gzones, nzones, G, W_cap, traj_xy, traj_gps, results, flight_path, alt_prof, verifier, mode)
+    payload = {"session_id": sid, **body}
     save_mission(sid, cfg.model_dump(), {
         "hnp_dist": hnp["metrics"]["dist"], "hnp_cost": hnp["metrics"]["cost"],
         "feasible": hnp["metrics"]["feasible"], "n_packages": len(pkgs), "mode": mode,
@@ -164,7 +165,6 @@ def _rehydrate(sid: str):
         cfg.loc_indices, cfg.pkg_requests, cfg.seed, cfg.incompat_density, cfg.n_gfz,
         cfg.deadline_tight, cfg.hazard_mix, cfg.cap_ratio, build_compat,
     )
-    synth = {p.idx: p.kappa for p in pkgs}
     results = run_all_algos(pkgs, traj_xy, city, G, gzones, nzones, W_cap, cfg.seed, cfg.wind_dir, cfg.llm_error)
     sess = {"city": city, "pkgs": pkgs, "G": G, "gzones": gzones, "nzones": nzones, "W_cap": W_cap,
             "traj_xy": traj_xy, "traj_gps": traj_gps, "results": results, "wind_dir": cfg.wind_dir,

@@ -37,6 +37,7 @@ interface MissionState {
   activeFlight: FlightStep[]
   activeAlt: AltPoint[]
   extraZones: Zone[]
+  flightEpoch: number // bumped on a NEW mission (resets drone); unchanged on replan
   droneHUD: { step: number; alt: number; payload: number; progress: number; action: string }
 
   setSelectedAlgo: (a: string) => void
@@ -72,6 +73,7 @@ export const useMission = create<MissionState>((set, get) => ({
   activeFlight: [],
   activeAlt: [],
   extraZones: [],
+  flightEpoch: 0,
   droneHUD: { step: 0, alt: 0, payload: 0, progress: 0, action: 'IDLE' },
 
   setSelectedAlgo: (a) => set({ selectedAlgo: a }),
@@ -112,15 +114,16 @@ export const useMission = create<MissionState>((set, get) => ({
               }))
           : []
       const payload = await api.generate({ loc_indices: DEFAULT_LOCS, seed: 42, ...cfg, pkg_requests })
-      set({
+      set((s) => ({
         mission: payload,
         activeFlight: payload.flight_path,
         activeAlt: payload.alt_profile,
         selectedAlgo: 'HNP',
         playing: true,
         loading: false,
+        flightEpoch: s.flightEpoch + 1,
         droneHUD: { step: 0, alt: 0, payload: 0, progress: 0, action: 'TAKEOFF' },
-      })
+      }))
     } catch (e) {
       set({ error: String(e), loading: false })
     }

@@ -4,9 +4,8 @@ Runs with LLM_MODE=benchmark (set in conftest) so no Ollama call is made; the
 generation still emits the full telemetry event stream and persists to SQLite.
 """
 
-from fastapi.testclient import TestClient
-
 from app.main import app
+from fastapi.testclient import TestClient
 
 client = TestClient(app)
 

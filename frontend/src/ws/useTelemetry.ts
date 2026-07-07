@@ -12,8 +12,11 @@ export function useTelemetry(sessionId: string | null | undefined) {
   useEffect(() => {
     if (!sessionId) return
     clearEvents()
+    const wsBase = import.meta.env.VITE_WS_BASE
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const url = `${proto}://${location.host}/ws/mission/${sessionId}`
+    const url = wsBase
+      ? `${wsBase}/ws/mission/${sessionId}`
+      : `${proto}://${location.host}/ws/mission/${sessionId}`
     const ws = new WebSocket(url)
     wsRef.current = ws
     ws.onmessage = (ev) => {

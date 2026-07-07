@@ -20,12 +20,20 @@ export function Drone({
   const rotors = useRef<THREE.Mesh[]>([])
   const progress = useRef(0)
   const frame = useRef(0)
+  const epochRef = useRef(0)
   const playing = useMission((s) => s.playing)
   const speed = useMission((s) => s.speed)
   const setHUD = useMission((s) => s.setDroneHUD)
+  const flightEpoch = useMission((s) => s.flightEpoch)
 
   useFrame((_, delta) => {
     if (!curve) return
+    // Reset to the depot on a NEW mission; on a replan the epoch is unchanged so
+    // the drone keeps its progress and continues from where it was (Eq. 8a).
+    if (epochRef.current !== flightEpoch) {
+      epochRef.current = flightEpoch
+      progress.current = 0
+    }
     const DURATION = 20 // seconds for a full traversal at speed 1
     if (playing) {
       progress.current = Math.min(1, progress.current + (delta * speed) / DURATION)

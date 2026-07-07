@@ -16,7 +16,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from app.config import OLLAMA_BASE_URL, OLLAMA_MODEL, LLM_MODE
+from app.config import LLM_MODE, OLLAMA_BASE_URL, OLLAMA_MODEL
 from app.models.db import init_db
 from app.routers import data as data_router
 from app.routers import llm as llm_router

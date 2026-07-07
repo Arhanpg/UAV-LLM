@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
-from typing import List, Tuple
+from typing import List
 
 import numpy as np
 
@@ -58,8 +58,8 @@ def load_locations() -> list[tuple]:
 def export_locations_json() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     rows = [
-        {"idx": i, "name": l[0], "lat": l[1], "lon": l[2], "bh": l[3], "cat": l[4], "desc": l[5] if len(l) > 5 else ""}
-        for i, l in enumerate(DHARWAD_LOCATIONS)
+        {"idx": i, "name": r[0], "lat": r[1], "lon": r[2], "bh": r[3], "cat": r[4], "desc": r[5] if len(r) > 5 else ""}
+        for i, r in enumerate(DHARWAD_LOCATIONS)
     ]
     with open(LOCATIONS_PATH, "w", encoding="utf-8") as f:
         json.dump(rows, f, indent=2)
@@ -185,14 +185,20 @@ def generate_world(
         gz_lat = c.lat + (oy / 111111)
         gz_lon = c.lon + (ox / (111111 * math.cos(math.radians(c.lat))))
         gzones.append(
-            GeoZone(lat=gz_lat, lon=gz_lon, x=c.x + ox, y=c.y + oy, radius=float(rng.uniform(80, 180)), kind="nofly", label=f"No-Fly near {c.label}")
+            GeoZone(
+                lat=gz_lat, lon=gz_lon, x=c.x + ox, y=c.y + oy,
+                radius=float(rng.uniform(80, 180)), kind="nofly", label=f"No-Fly near {c.label}",
+            )
         )
         ox2 = float(rng.uniform(-80, 80))
         oy2 = float(rng.uniform(-80, 80))
         nz_lat = c.lat + (oy2 / 111111)
         nz_lon = c.lon + (ox2 / (111111 * math.cos(math.radians(c.lat))))
         nzones.append(
-            GeoZone(lat=nz_lat, lon=nz_lon, x=c.x + ox2, y=c.y + oy2, radius=float(rng.uniform(100, 250)), kind="noise", label=f"Noise Zone {i + 1}")
+            GeoZone(
+                lat=nz_lat, lon=nz_lon, x=c.x + ox2, y=c.y + oy2,
+                radius=float(rng.uniform(100, 250)), kind="noise", label=f"Noise Zone {i + 1}",
+            )
         )
 
     traj_xy = [(city[0].x, city[0].y)]
