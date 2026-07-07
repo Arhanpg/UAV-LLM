@@ -5,9 +5,11 @@ import { KAPPA_COLOR } from '../scene/coords'
 // Fixed-layout graph of the commodity compatibility graph Gc. Green edges =
 // compatible (may co-fly); red = incompatible (Eq. 2). The onboard active set A_i
 // must induce a clique in Gc (Eq. 4).
+const DEFAULT_CLASSES = ['PHARMA', 'FOOD', 'ELECTRONICS', 'FLAMMABLE', 'OXIDIZER', 'CRYOGENIC', 'GENERAL']
+
 export function CompatGraphView() {
   const mission = useMission((s) => s.mission)
-  const classes = mission?.classes ?? ['PHARMA', 'FOOD', 'ELECTRONICS', 'FLAMMABLE', 'OXIDIZER', 'CRYOGENIC', 'GENERAL']
+  const classes = mission?.classes ?? DEFAULT_CLASSES
   const incompat = mission?.incompat_pairs ?? []
 
   const nodes = useMemo(() => {

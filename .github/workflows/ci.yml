@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main, next-level-build]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend · ruff + pytest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Lint (ruff)
+        run: ruff check app tests
+      - name: Test (pytest)
+        env:
+          LLM_MODE: benchmark # no Ollama in CI — exercise the deterministic path
+        run: pytest -q
+
+  frontend:
+    name: Frontend · eslint + typecheck + build + vitest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm ci || npm install
+      - name: Lint (eslint)
+        run: npm run lint
+      - name: Typecheck + build
+        run: npm run build
+      - name: Test (vitest)
+        run: npm run test

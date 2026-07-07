@@ -22,8 +22,10 @@ services:
     ports:
       - "5173:5173"
     environment:
-      - VITE_API_URL=http://localhost:8000
-      - VITE_WS_URL=ws://localhost:8000
+      # The browser runs on the host, so it reaches the backend via its
+      # published port (localhost:8000), not the compose service name.
+      - VITE_API_BASE=http://localhost:8000
+      - VITE_WS_BASE=ws://localhost:8000
     depends_on:
       - backend
 

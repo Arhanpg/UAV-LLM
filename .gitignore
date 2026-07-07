@@ -29,7 +29,11 @@ frontend/.vite/
 # Build artifacts
 dist/
 build/
+
+# Source PDFs / prompt kept out of the repo (large / not code)
 mpdd.pdf
 UAV_LLM_Project_organized.pdf
 UAV_LLM_NEXT_LEVEL_BUILD_PROMPT.md
-semantic_uav_delivery_stress_final.ipynb
+
+# Stray root lockfile (the real one lives in frontend/)
+/package-lock.json

@@ -1,12 +1,10 @@
 """Phase 0 smoke tests — verify modular imports and API wiring."""
 
-from fastapi.testclient import TestClient
-
 from app.algorithms.compat_graph import build_compat, clique_ok
-from app.algorithms.mpdd import mpdd_scores
 from app.config import CLASSES, OLLAMA_MODEL
 from app.geo.locations import load_locations
 from app.main import app
+from fastapi.testclient import TestClient
 
 
 def test_imports_and_config():

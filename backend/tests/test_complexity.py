@@ -8,9 +8,8 @@ fixed start/end contract.
 
 import time
 
-import numpy as np
-
 import app.algorithms.tsp_refine as tsp
+import numpy as np
 from app.algorithms.tsp_refine import mst_preorder_tsp, refine
 
 
