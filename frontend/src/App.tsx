@@ -1,7 +1,44 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { CityScene } from './scene/CityScene'
+import { AlgorithmInspector } from './panels/AlgorithmInspector'
+import { ComparisonDashboard } from './panels/ComparisonDashboard'
+import { MissionBuilder } from './panels/MissionBuilder'
+import { CompatGraphView } from './panels/CompatGraphView'
+import { NLInstructionPanel } from './panels/NLInstructionPanel'
 import { useMission } from './store/missionStore'
 import { useTelemetry } from './ws/useTelemetry'
+
+const TABS = [
+  { id: 'inspector', label: 'Glass Box', el: <AlgorithmInspector /> },
+  { id: 'compare', label: 'Compare', el: <ComparisonDashboard /> },
+  { id: 'build', label: 'Build', el: <MissionBuilder /> },
+  { id: 'gc', label: 'Gc Graph', el: <CompatGraphView /> },
+  { id: 'chat', label: 'LLM Chat', el: <NLInstructionPanel /> },
+]
+
+function Sidebar() {
+  const [tab, setTab] = useState('inspector')
+  const selectedNode = useMission((s) => s.selectedNode)
+  useEffect(() => {
+    if (selectedNode !== null) setTab('build')
+  }, [selectedNode])
+  return (
+    <aside className="flex w-[380px] flex-col border-l border-slate-800 bg-mission-panel">
+      <div className="flex border-b border-slate-800">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`flex-1 py-2 text-[11px] font-medium ${tab === t.id ? 'border-b-2 border-cyan-400 text-cyan-300' : 'text-slate-500 hover:text-slate-300'}`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div className="min-h-0 flex-1">{TABS.find((t) => t.id === tab)?.el}</div>
+    </aside>
+  )
+}
 
 function AltSparkline() {
   const alt = useMission((s) => s.activeAlt)
@@ -110,25 +147,28 @@ export default function App() {
   return (
     <div className="flex h-screen flex-col bg-mission-bg text-slate-100">
       <TopBar />
-      <main className="relative flex-1">
-        <CityScene />
-        <Hud />
-        {error && (
-          <div className="absolute right-4 top-4 max-w-sm rounded border border-red-700 bg-red-950/80 p-3 text-xs text-red-200">
-            {error}
-          </div>
-        )}
-        {!mission && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div className="rounded-lg border border-slate-700 bg-mission-panel/80 px-6 py-4 text-center text-slate-300">
-              <div className="text-lg font-semibold text-cyan-300">Semantic Multi-Commodity UAV Delivery</div>
-              <div className="mt-1 text-sm text-slate-400">
-                Click “Generate Mission” to plan a real LLM-driven mission over Dharwad–Hubli.
+      <div className="flex min-h-0 flex-1">
+        <main className="relative flex-1">
+          <CityScene />
+          <Hud />
+          {error && (
+            <div className="absolute right-4 top-4 max-w-sm rounded border border-red-700 bg-red-950/80 p-3 text-xs text-red-200">
+              {error}
+            </div>
+          )}
+          {!mission && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <div className="rounded-lg border border-slate-700 bg-mission-panel/80 px-6 py-4 text-center text-slate-300">
+                <div className="text-lg font-semibold text-cyan-300">Semantic Multi-Commodity UAV Delivery</div>
+                <div className="mt-1 text-sm text-slate-400">
+                  Click “Generate Mission” to plan a real LLM-driven mission over Dharwad–Hubli.
+                </div>
               </div>
             </div>
-          </div>
-        )}
-      </main>
+          )}
+        </main>
+        <Sidebar />
+      </div>
     </div>
   )
 }
