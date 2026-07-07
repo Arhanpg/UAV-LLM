@@ -37,3 +37,6 @@ UAV_LLM_NEXT_LEVEL_BUILD_PROMPT.md
 
 # Stray root lockfile (the real one lives in frontend/)
 /package-lock.json
+
+# TS build cache
+*.tsbuildinfo
