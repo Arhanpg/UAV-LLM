@@ -1,7 +1,6 @@
 """Tests for via/waypoint parsing, kappa sanitization and quantity extraction."""
 
 import pytest
-
 from app.llm.nl_mission_parser import (
     _extract_quantity,
     _infer_kappa_from_text,
