@@ -1,7 +1,6 @@
 """FastAPI application entry point."""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from app.routers import data, llm, mission
 from app.routers.stress import router as stress_router
