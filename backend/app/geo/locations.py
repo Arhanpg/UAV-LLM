@@ -44,6 +44,9 @@ DHARWAD_LOCATIONS = [
     ("Hubli Municipal Corporation", 15.3620, 75.1250, 16.0, "govt", "Hubli-Dharwad Municipal Corporation"),
     ("Siddharoodha Math", 15.4575, 75.0116, 8.0, "religious", "Siddharoodha Math, Hubli Road, Dharwad"),
     ("Nrupatunga Betta", 15.4520, 75.0168, 5.0, "park", "Nrupatunga Betta Hillock, Dharwad"),
+    # Added: real Dharwad PU college — GPS-verified
+    ("Sana Shaheen Independent PU College", 15.4640, 75.0155, 10.0, "education",
+     "Sana Shaheen Independent PU College, Dharwad — waypoint / via-stop"),
 ]
 
 
@@ -109,7 +112,7 @@ def generate_world(
         "FOOD": "Food Package",
         "ELECTRONICS": "Device",
         "FLAMMABLE": "Fuel Canister",
-        "OXIDIZER": "O₂ Cylinder",
+        "OXIDIZER": "O\u2082 Cylinder",
         "CRYOGENIC": "Cryo Sample",
         "GENERAL": "General Cargo",
     }
@@ -143,7 +146,7 @@ def generate_world(
             slack = float(rng.uniform(40, 120)) * (1.05 - deadline_tight)
             dl = dep_leg / 15.0 + slack + float(rng.uniform(0, 25))
             pr = 1.8 if kappa == "PHARMA" else (1.4 if kappa in HAZARD_CLASSES else 1.0)
-            desc = req.get("description") or f"{PKG_LABELS.get(kappa, 'Pkg')} · {pu_c.label} → {dl_c.label}"
+            desc = req.get("description") or f"{PKG_LABELS.get(kappa, 'Pkg')} \u00b7 {pu_c.label} \u2192 {dl_c.label}"
             packages.append(
                 Package(i, pu_idx, dl_idx, weight, kappa, dl, pr, kappa in {"PHARMA", "FOOD", "CRYOGENIC"}, desc)
             )
@@ -166,7 +169,7 @@ def generate_world(
             slack = float(rng.uniform(40, 120)) * (1.05 - deadline_tight)
             dl_t = dep_leg / 15.0 + slack + float(rng.uniform(0, 25))
             pr = 1.8 if kappa == "PHARMA" else (1.4 if kappa in HAZARD_CLASSES else 1.0)
-            desc = f"{PKG_LABELS.get(kappa, 'Pkg')} · {pu_c.label} → {dl_c.label}"
+            desc = f"{PKG_LABELS.get(kappa, 'Pkg')} \u00b7 {pu_c.label} \u2192 {dl_c.label}"
             packages.append(
                 Package(i, pi_idx, di_idx, weight, kappa, dl_t, pr, kappa in {"PHARMA", "FOOD", "CRYOGENIC"}, desc)
             )
