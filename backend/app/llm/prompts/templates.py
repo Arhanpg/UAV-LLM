@@ -27,8 +27,18 @@ Known locations: {locations}
 Commodity classes: {classes}
 Action types: PICKUP, DELIVER, REROUTE, ADD_STOP, REMOVE_STOP, SPLIT_DELIVERY,
 EMERGENCY_RETURN, INFO.
-SPLIT_DELIVERY = hand off the final leg to a ground agent (used when a zone
-becomes unreachable but the payload must still arrive, e.g. cold-chain insulin).
+
+CRITICAL WAYPOINT RULES:
+- "go through X", "via X", "pass through X", "stop at X", "route through X", "visit X on the way"
+  → emit action type ADD_STOP with location = X (exact known name from the list above)
+- "deliver N items/packages to X" or "give X N items"
+  → emit action type DELIVER with location = X, quantity = N
+- If an instruction says "go through X AND deliver to Y", emit TWO actions:
+  1. ADD_STOP for X
+  2. DELIVER for Y
+- ADD_STOP means the UAV must physically waypoint through that location mid-route
+- SPLIT_DELIVERY = hand off the final leg to a ground agent (used when a zone
+  becomes unreachable but the payload must still arrive, e.g. cold-chain insulin)
 
 Instruction: "{instruction}"
 
