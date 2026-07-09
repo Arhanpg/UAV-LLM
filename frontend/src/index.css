@@ -1,19 +1,55 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'leaflet/dist/leaflet.css';
 
-:root {
-  color-scheme: dark;
-  font-family: 'Segoe UI', system-ui, sans-serif;
-  background: #07090f;
-  color: #e6edf3;
-}
+* { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-  margin: 0;
-  min-height: 100vh;
+  background: #05070d;
+  color: #e2e8f0;
+  font-family: system-ui, -apple-system, sans-serif;
+  overflow: hidden;
+  height: 100vh;
+}
+
+#root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.leaflet-container {
+  background: #0a0e1a !important;
+  height: 100% !important;
+  width: 100% !important;
+}
+
+.leaflet-tile-pane {
+  filter: brightness(0.8) saturate(0.65);
+}
+
+.uav-drone-icon {
+  filter: drop-shadow(0 0 8px #00d4ff);
+  font-size: 24px;
+  transition: all 0.5s;
+}
+
+.nfz-tooltip {
+  background: rgba(239,68,68,0.9) !important;
+  border: 1px solid #ef4444 !important;
+  color: #fff !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
 }
 
 .mono {
-  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+}
+
+@keyframes droneFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.4); }
 }
